@@ -75,6 +75,7 @@ $script:Presets = @(
     [ordered]@{ Group='Hardware';       Label='Hardware Errors (WHEA)'; LogName='System'; Id=@(1);     Description='Fatal/corrected hardware errors via WHEA (source Microsoft-Windows-WHEA-Logger)' }
     [ordered]@{ Group='Hardware';       Label='Device Install/Removal'; LogName='Microsoft-Windows-Kernel-PnP/Configuration'; Id=@(400,410,420,430); Description='Device driver install/removal lifecycle - tip: use Keyword box to filter by device type (e.g. "USB")' }
     [ordered]@{ Group='Hardware';       Label='Unexpected Shutdown';    LogName='System'; Id=@(41);    Description='Kernel-Power: system rebooted without a clean shutdown - often power/hardware related' }
+    [ordered]@{ Group='Hardware';       Label='BSOD / Bugcheck';        LogName='System'; Id=@(1001); ProviderName='Microsoft-Windows-WER-SystemErrorReporting'; Description='Windows Stop Error (blue screen) - bugcheck code and parameters' }
 )
 
 $script:SecurityIdentityIds = @(4624,4625,4634,4647,4648,4672,4720,4722,4725,4726,4738,4728,4729,4732,4733,4756,4757,4740,4768,4769,4771,4776)
@@ -100,6 +101,9 @@ function Get-EventsForPreset {
     $fh = @{ LogName = $Preset.LogName }
     if ($Preset.Contains('Id') -and $Preset.Id -and $Preset.Id.Count -gt 0) {
         $fh['Id'] = [int[]]$Preset.Id
+    }
+    if ($Preset.Contains('ProviderName') -and $Preset.ProviderName) {
+        $fh['ProviderName'] = [string[]]$Preset.ProviderName
     }
     try {
         $ev = Get-WinEvent -FilterHashtable $fh -MaxEvents $MaxEvents -ErrorAction Stop

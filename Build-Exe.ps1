@@ -19,8 +19,7 @@ if (-not (Test-Path $distDir)) { New-Item -ItemType Directory -Path $distDir | O
 try {
     Invoke-ps2exe -inputFile "$PSScriptRoot\EventLogViewer.ps1" -outputFile $OutputPath `
         -noConsole -STA -title 'Windows Event Log Viewer' -version $Version `
-        -company 'Critical MSP' -product 'Event Log Viewer' `
-        -copyright "(c) $(Get-Date -Format yyyy) Critical MSP" -requireAdmin:$false `
+        -product 'Event Log Viewer' -requireAdmin:$false `
         -ErrorAction Stop
     Write-Host "Built: $OutputPath" -ForegroundColor Green
 } catch {
