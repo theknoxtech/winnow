@@ -42,7 +42,7 @@ $script:LevelMap = [ordered]@{
 $script:Presets = @(
     [ordered]@{ Group='System Changes'; Label='Software Installs';  LogName='Application'; Id=@(11707,1033,1034);          Description='MsiInstaller product install/remove' }
     [ordered]@{ Group='System Changes'; Label='Service Changes';    LogName='System';      Id=@(7045,7036);                 Description='New service installed or state changed' }
-    [ordered]@{ Group='System Changes'; Label='Driver Installs';    LogName='System';      Id=@(7045);                      Description='Kernel driver or service installed' }
+    [ordered]@{ Group='System Changes'; Label='Driver Installs';    LogName='System';      Id=@(7045); MessageFilter='driver'; Description='Kernel/file system driver installed (ID 7045 is shared by every new service; filtered here to entries whose Service Type mentions "driver")' }
     [ordered]@{ Group='System Changes'; Label='Startup/Shutdown';   LogName='System';      Id=@(6005,6006,1074,6008);       Description='Boot, clean shutdown, unexpected shutdown, restart reason' }
     [ordered]@{ Group='Account/Policy'; Label='User Acct Changes';  LogName='Security';    Id=@(4720,4722,4725,4726,4738); Description='Account created, enabled, disabled, deleted, modified' }
     [ordered]@{ Group='Account/Policy'; Label='Policy Changes';     LogName='Security';    Id=@(4719,4739);                 Description='System and domain audit policy changed' }
@@ -59,10 +59,10 @@ $script:Presets = @(
     [ordered]@{ Group='App Health';     Label='App Crashes';        LogName='Application'; Id=@(1000,1002);                 Description='Application Error and Application Hang (WER)' }
     [ordered]@{ Group='App Health';     Label='App Hangs';          LogName='Application'; Id=@(1002,1001);                 Description='Hang detection and Windows Error Reporting follow-up' }
     [ordered]@{ Group='Resources';      Label='Resource/Memory';    LogName='System';      Id=@(2004,2019,2020); LogName2='Application'; Id2=@(1530); Description='Low memory / pool exhaustion / profile warnings' }
-    [ordered]@{ Group='Resources';      Label='Disk Errors';        LogName='System';      Id=@(7,11,153);                  Description='Bad block, device I/O error, disk reset' }
+    [ordered]@{ Group='Resources';      Label='Disk Errors';        LogName='System';      Id=@(7,11,153); ProviderName=@('disk','Microsoft-Windows-Disk'); Description='Bad block, device I/O error, disk reset - IDs 7/11/153 are also reused by unrelated providers (e.g. Hyper-V networking, Kernel-Boot), so this is scoped to the disk drivers specifically' }
     [ordered]@{ Group='Printing';       Label='Print Jobs';         LogName='Microsoft-Windows-PrintService/Operational'; Id=@(307);         Description='Document printed — job, user, printer, pages' }
     [ordered]@{ Group='Printing';       Label='Print Errors';       LogName='Microsoft-Windows-PrintService/Operational'; Id=@(372,374,375); Description='Spooler errors and failed print jobs' }
-    [ordered]@{ Group='Printing';       Label='Spooler Events';     LogName='System';      Id=@(7031,7034);                 Description='Print Spooler service crash or restart' }
+    [ordered]@{ Group='Printing';       Label='Spooler Events';     LogName='System';      Id=@(7031,7034); MessageFilter='Spooler'; Description='Print Spooler service crash or restart (IDs 7031/7034 are generic Service Control Manager events shared by every service, filtered here to Spooler by message text)' }
     [ordered]@{ Group='Networking';     Label='Network Changes';    LogName='System';      Id=@(10000,10001,4000,4001);     Description='NIC connect/disconnect (NDIS)' }
     [ordered]@{ Group='Networking';     Label='DHCP Events';        LogName='System';      Id=@(1001,1002,1003);            Description='DHCP lease obtained, renewed, or lost' }
     [ordered]@{ Group='Networking';     Label='DNS Errors';         LogName='System';      Id=@(1014); LogName2='Application'; Id2=@(4015); Description='DNS name resolution failure and DNS server errors' }
@@ -72,9 +72,9 @@ $script:Presets = @(
     [ordered]@{ Group='Active Directory'; Label='AD Replication (All)';  LogName='Directory Service'; Description='All Directory Service log entries - replication/health issues (Domain Controllers only)' }
     [ordered]@{ Group='Active Directory'; Label='DFS Replication (All)'; LogName='DFS Replication';   Description='All DFSR entries - SYSVOL/DFS replication issues (Domain Controllers only)' }
     [ordered]@{ Group='Active Directory'; Label='DNS Server (All)';      LogName='DNS Server';         Description='All DNS Server role entries (Domain Controllers/DNS role only)' }
-    [ordered]@{ Group='Hardware';       Label='Hardware Errors (WHEA)'; LogName='System'; Id=@(1);     Description='Fatal/corrected hardware errors via WHEA (source Microsoft-Windows-WHEA-Logger)' }
+    [ordered]@{ Group='Hardware';       Label='Hardware Errors (WHEA)'; LogName='System'; Id=@(1); ProviderName=@('Microsoft-Windows-WHEA-Logger','Microsoft-Windows-Kernel-WHEA'); Description='Fatal/corrected hardware errors via WHEA - ID 1 alone is one of the most-reused IDs in the System log, so this is scoped to the WHEA providers specifically' }
     [ordered]@{ Group='Hardware';       Label='Device Install/Removal'; LogName='Microsoft-Windows-Kernel-PnP/Configuration'; Id=@(400,410,420,430); Description='Device driver install/removal lifecycle - tip: use Keyword box to filter by device type (e.g. "USB")' }
-    [ordered]@{ Group='Hardware';       Label='Unexpected Shutdown';    LogName='System'; Id=@(41);    Description='Kernel-Power: system rebooted without a clean shutdown - often power/hardware related' }
+    [ordered]@{ Group='Hardware';       Label='Unexpected Shutdown';    LogName='System'; Id=@(41); ProviderName='Microsoft-Windows-Kernel-Power'; Description='Kernel-Power: system rebooted without a clean shutdown - often power/hardware related' }
     [ordered]@{ Group='Hardware';       Label='BSOD / Bugcheck';        LogName='System'; Id=@(1001); ProviderName='Microsoft-Windows-WER-SystemErrorReporting'; Description='Windows Stop Error (blue screen) - bugcheck code and parameters' }
 )
 
@@ -125,6 +125,14 @@ function Get-EventsForPreset {
         } catch [System.UnauthorizedAccessException] {
             throw
         } catch { }
+    }
+
+    if ($Preset.Contains('MessageFilter') -and $Preset.MessageFilter) {
+        # Some Event IDs (e.g. Service Control Manager's generic "service crashed" IDs) are
+        # shared across every service on the box, with no distinguishing ProviderName - only
+        # the message text says which service. Filter those down to the one this preset means.
+        $mf = $Preset.MessageFilter
+        $results = [System.Collections.Generic.List[object]]@($results | Where-Object { $_.Message -like "*$mf*" })
     }
 
     return $results | Sort-Object TimeCreated -Descending
