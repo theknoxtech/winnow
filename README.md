@@ -1,19 +1,25 @@
-# Windows Event Log Viewer
+<img src="docs/images/icon.png" align="right" width="104" alt="Winnow icon">
 
-A single-file Windows desktop app for browsing Windows Event Logs, with quick-filter presets for
+# Winnow
+
+**Cut the chaff out of the Windows Event Log.**
+
+A single-file Windows desktop app for triaging Windows Event Logs, with quick-filter presets for
 common IT and security investigations, application-name search, and security-identity search by
 user, host, or IP.
 
-Built for remote support: one `EventLogViewer.exe`, about 400 KB, no installer and no
-prerequisites. It targets .NET Framework 4.8, which ships in-box on Windows 10 1903+, Windows 11,
-and Server 2019+, and it is designed to work correctly inside a **ScreenConnect Backstage**
-session.
+Event Viewer will show you everything. Winnow's job is the opposite: 36 curated presets that go
+straight to the events that explain what actually went wrong on the machine in front of you.
+
+Built for remote support: one `Winnow.exe`, about 400 KB, no installer and no prerequisites. It
+targets .NET Framework 4.8, which ships in-box on Windows 10 1903+, Windows 11, and Server 2019+,
+and it is designed to work correctly inside a **ScreenConnect Backstage** session.
 
 ![The main window: filter panel, Quick Filters, results grid and detail pane](docs/images/main-window.png)
 
 ## Running
 
-Download `EventLogViewer.exe` from [Releases](../../releases) and run it. That is the whole
+Download `Winnow.exe` from [Releases](../../releases) and run it. That is the whole
 install — copy the single file wherever you need it.
 
 Right-click → *Run as Administrator* if you need the Security log (or any preset that reads it).
@@ -23,7 +29,7 @@ Right-click → *Run as Administrator* if you need the Security log (or any pres
 Copy the exe to the machine and run it from the Backstage command prompt:
 
 ```bat
-C:\Windows\Temp\EventLogViewer.exe
+C:\Windows\Temp\Winnow.exe
 ```
 
 Backstage runs processes as `NT AUTHORITY\SYSTEM` on a separate desktop, which changes a few
@@ -32,7 +38,7 @@ things. The app detects this and adapts:
 | | Behaviour in Backstage |
 |---|---|
 | **Security log** | Works with no elevation prompt — the process is already SYSTEM. |
-| **CSV export** | Skips the file dialog (unreliable on an alternate desktop) and writes to `%TEMP%\EventLogViewer\`, then copies the path to the clipboard. Retrieve it with ScreenConnect file transfer. |
+| **CSV export** | Skips the file dialog (unreliable on an alternate desktop) and writes to `%TEMP%\Winnow\`, then copies the path to the clipboard. Retrieve it with ScreenConnect file transfer. |
 | **Update link** | Copies the release URL instead of launching a browser as SYSTEM. |
 | **Window size** | Sized from the actual desktop, so it fits a 1024×768 Backstage screen. |
 
@@ -42,7 +48,7 @@ tell at a glance which behaviour is in effect.
 ### Command line
 
 ```
-EventLogViewer.exe [--presets <path>] [--trace-bindings]
+Winnow.exe [--presets <path>] [--trace-bindings]
 
   --presets <path>   Load preset overrides from the given presets.json.
                      Defaults to presets.json beside the executable, if present.
@@ -308,21 +314,25 @@ not needed — the projects target .NET Framework 4.8 but build with the SDK alo
 .\build\publish.ps1
 ```
 
-Runs the tests and produces a single self-contained `dist\EventLogViewer.exe`. Dependencies are
+Runs the tests and produces a single self-contained `dist\Winnow.exe`. Dependencies are
 embedded with [Costura](https://github.com/Fody/Costura), so the exe has no loose DLLs beside it.
 
 ```powershell
 dotnet test                             # tests only
 .\build\Generate-PresetDocs.ps1         # regenerate the preset reference above
+.\build\Generate-Icon.ps1               # regenerate winnow.ico
 ```
+
+The icon is generated from a script rather than committed as an opaque binary, so it can be
+re-coloured or reshaped later without anyone reverse-engineering it in an image editor.
 
 ### Layout
 
 | Path | Contents |
 |---|---|
-| `src/EventLogViewer.Core` | Query engine, preset model, CSV export, update check, host detection. No UI dependency. |
-| `src/EventLogViewer.Wpf` | WPF views and view models. |
-| `tests/EventLogViewer.Tests` | Unit tests, plus tests that query this machine's real event log. |
+| `src/Winnow.Core` | Query engine, preset model, CSV export, update check, host detection. No UI dependency. |
+| `src/Winnow.App` | WPF views and view models. |
+| `tests/Winnow.Tests` | Unit tests, plus tests that query this machine's real event log. |
 | `legacy/` | The original PowerShell + WinForms version, kept for one release cycle. |
 
 ## Releasing

@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Builds EventLogViewer.exe as a single self-contained file.
+    Builds Winnow.exe as a single self-contained file.
 
 .DESCRIPTION
     Produces one executable with the Core library and Newtonsoft.Json embedded (via Costura), so
@@ -19,7 +19,7 @@
     Build configuration. Defaults to Release.
 
 .PARAMETER OutputPath
-    Where to place the finished exe. Defaults to dist\EventLogViewer.exe.
+    Where to place the finished exe. Defaults to dist\Winnow.exe.
 
 .PARAMETER SkipTests
     Skip the test suite. Not recommended; intended for iterating on packaging only.
@@ -39,15 +39,15 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$wpfProject = Join-Path $repoRoot 'src\EventLogViewer.Wpf\EventLogViewer.Wpf.csproj'
-$testProject = Join-Path $repoRoot 'tests\EventLogViewer.Tests\EventLogViewer.Tests.csproj'
+$wpfProject = Join-Path $repoRoot 'src\Winnow.App\Winnow.App.csproj'
+$testProject = Join-Path $repoRoot 'tests\Winnow.Tests\Winnow.Tests.csproj'
 
-if (-not $OutputPath) { $OutputPath = Join-Path $repoRoot 'dist\EventLogViewer.exe' }
+if (-not $OutputPath) { $OutputPath = Join-Path $repoRoot 'dist\Winnow.exe' }
 
 # A tag like v1.3.0 is accepted as well as a bare 1.3.0.
 $assemblyVersion = $Version -replace '^v', ''
 
-Write-Host "Building EventLogViewer $assemblyVersion ($Configuration)" -ForegroundColor Cyan
+Write-Host "Building Winnow $assemblyVersion ($Configuration)" -ForegroundColor Cyan
 
 if (-not $SkipTests) {
     Write-Host 'Running tests...' -ForegroundColor Cyan
@@ -61,7 +61,7 @@ dotnet build $wpfProject -c $Configuration --nologo -v quiet `
     "/p:InformationalVersion=$assemblyVersion"
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 
-$built = Join-Path $repoRoot "src\EventLogViewer.Wpf\bin\$Configuration\net48\EventLogViewer.exe"
+$built = Join-Path $repoRoot "src\Winnow.App\bin\$Configuration\net48\Winnow.exe"
 if (-not (Test-Path $built)) { throw "Expected build output not found: $built" }
 
 $distDir = Split-Path $OutputPath -Parent

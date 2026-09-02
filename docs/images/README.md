@@ -1,5 +1,9 @@
 # Screenshots
 
+> `icon.png` is **generated**, not a screenshot — `build\Generate-Icon.ps1` writes it alongside
+> `winnow.ico` so the mark in the README and the mark in the executable cannot drift apart.
+> Don't hand-edit it; change the script instead.
+
 Drop PNGs in this folder using the exact filenames below — the README already links to them.
 
 Until a file exists, GitHub renders a broken-image icon where it should be. If you want to push

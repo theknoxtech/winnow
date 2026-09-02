@@ -1,0 +1,267 @@
+<Window x:Class="Winnow.App.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Winnow"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource WindowBackground}"
+        FontFamily="{StaticResource UiFont}"
+        FontSize="12"
+        MinWidth="720" MinHeight="480">
+
+    <!--
+      No fixed Width/Height and a deliberately low MinWidth/MinHeight. A ScreenConnect Backstage
+      desktop is commonly 1024x768 and can be smaller; the WinForms version's 1150x780 default with
+      a 900x600 minimum simply did not fit one. The constructor sizes the window against the actual
+      work area instead.
+    -->
+
+    <Window.InputBindings>
+        <KeyBinding Key="Return" Command="{Binding SearchCommand}" />
+        <KeyBinding Key="F5" Command="{Binding SearchCommand}" />
+        <KeyBinding Key="Escape" Command="{Binding CancelCommand}" />
+    </Window.InputBindings>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- filter panel -->
+            <RowDefinition Height="Auto" />   <!-- preset strip -->
+            <RowDefinition Height="Auto" />   <!-- warning banner -->
+            <RowDefinition Height="*" />      <!-- results + detail -->
+            <RowDefinition Height="Auto" />   <!-- status bar -->
+        </Grid.RowDefinitions>
+
+        <!-- ============ Filters ============ -->
+        <Border Grid.Row="0" Background="{StaticResource PanelBackground}"
+                BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="0,0,0,1" Padding="6,6,6,4">
+            <StackPanel>
+                <WrapPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBlock Text="Log:" Style="{StaticResource FieldLabel}" />
+                    <ComboBox Width="200" IsEditable="True"
+                              ItemsSource="{Binding LogSources}"
+                              Text="{Binding SelectedLogSource, UpdateSourceTrigger=PropertyChanged}"
+                              ToolTip="Any log name can be typed here, not just the listed ones." />
+
+                    <TextBlock Text="Level:" Style="{StaticResource FieldLabel}" />
+                    <ComboBox Width="110" ItemsSource="{Binding Levels}"
+                              SelectedItem="{Binding SelectedLevel}" />
+
+                    <TextBlock Text="Event ID:" Style="{StaticResource FieldLabel}" />
+                    <TextBox Width="120" Text="{Binding EventIdText, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="Comma-separated, e.g. 7045,7036. Blank for all." />
+
+                    <TextBlock Text="Max Events:" Style="{StaticResource FieldLabel}" />
+                    <TextBox Width="70" Text="{Binding MaxEvents, UpdateSourceTrigger=PropertyChanged}" />
+
+                    <TextBlock Text="Keyword:" Style="{StaticResource FieldLabel}" />
+                    <TextBox Width="200" Text="{Binding Keyword, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="Substring match against the event message. Applies on top of a preset." />
+                </WrapPanel>
+
+                <WrapPanel Orientation="Horizontal">
+                    <CheckBox Content="From:" IsChecked="{Binding UseFrom}" />
+                    <DatePicker SelectedDate="{Binding FromDate}" IsEnabled="{Binding UseFrom}" Width="120" />
+
+                    <CheckBox Content="To:" IsChecked="{Binding UseTo}" />
+                    <DatePicker SelectedDate="{Binding ToDate}" IsEnabled="{Binding UseTo}" Width="120" />
+
+                    <Button Content="Search" Style="{StaticResource PrimaryButton}"
+                            Command="{Binding SearchCommand}" MinWidth="76" />
+                    <Button Content="Cancel" Style="{StaticResource FlatButton}"
+                            Command="{Binding CancelCommand}" MinWidth="66" />
+                    <Button Content="Clear" Style="{StaticResource FlatButton}"
+                            Command="{Binding ClearCommand}" MinWidth="60" />
+                    <Button Content="Export CSV" Style="{StaticResource FlatButton}"
+                            Command="{Binding ExportCommand}" />
+                    <Button Content="Edit Presets…" Style="{StaticResource FlatButton}"
+                            Command="{Binding EditPresetsCommand}" />
+                </WrapPanel>
+
+                <Expander Header="Application / Security identity search" Margin="0,4,0,0" Foreground="{StaticResource TextPrimary}">
+                    <!--
+                      Behind an expander rather than always-visible: these two rows cost ~60px of
+                      vertical space that a small Backstage desktop cannot spare, and they are the
+                      least-used part of the filter panel.
+                    -->
+                    <StackPanel Margin="0,6,0,0">
+                        <WrapPanel Margin="0,0,0,4">
+                            <TextBlock Text="Application:" Style="{StaticResource FieldLabel}" />
+                            <TextBox Width="200" Text="{Binding AppName, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="e.g. Chrome, SQL Server" />
+                            <Button Content="Find App Events" Style="{StaticResource FlatButton}"
+                                    Command="{Binding AppSearchCommand}" />
+                        </WrapPanel>
+                        <WrapPanel>
+                            <TextBlock Text="User:" Style="{StaticResource FieldLabel}" />
+                            <TextBox Width="130" Text="{Binding SecUser, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Text="Host:" Style="{StaticResource FieldLabel}" />
+                            <TextBox Width="130" Text="{Binding SecHost, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Text="IP:" Style="{StaticResource FieldLabel}" />
+                            <TextBox Width="110" Text="{Binding SecIp, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button Content="Search Security Events" Style="{StaticResource FlatButton}"
+                                    Command="{Binding SecuritySearchCommand}" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Expander>
+            </StackPanel>
+        </Border>
+
+        <!-- ============ Presets ============ -->
+        <Border Grid.Row="1" Background="{StaticResource PresetBackground}"
+                BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="0,0,0,1" Padding="6,4">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" Text="Quick Filters:" FontWeight="SemiBold"
+                           VerticalAlignment="Top" Margin="0,7,8,0" />
+                <!--
+                  Capped height with its own scrollbar. Without this, 36 wrapped preset buttons set
+                  the window's minimum height and can consume most of a small Backstage desktop.
+                -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                              MaxHeight="112">
+                    <ItemsControl ItemsSource="{Binding Presets}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Content="{Binding Label}"
+                                        Style="{StaticResource PresetButton}"
+                                        Background="{Binding Group, Converter={StaticResource GroupColor}}"
+                                        Command="{Binding DataContext.PresetCommand,
+                                                  RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                        CommandParameter="{Binding}">
+                                    <Button.ToolTip>
+                                        <ToolTip MaxWidth="420">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Label}" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding Description}" TextWrapping="Wrap"
+                                                           Margin="0,3,0,0" />
+                                            </StackPanel>
+                                        </ToolTip>
+                                    </Button.ToolTip>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+        <!-- ============ Preset file warning ============ -->
+        <Border Grid.Row="2" Background="{StaticResource WarningBackground}"
+                BorderBrush="{StaticResource WarningBorder}" BorderThickness="0,0,0,1" Padding="8,5"
+                Visibility="{Binding PresetWarning, Converter={StaticResource StringToVisibility}}">
+            <TextBlock Text="{Binding PresetWarning}" TextWrapping="Wrap" />
+        </Border>
+
+        <!-- ============ Results + detail ============ -->
+        <Grid Grid.Row="3">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="3*" MinHeight="80" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="1*" MinHeight="52" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Background="{StaticResource PanelBackground}"
+                    BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="0,0,0,1" Padding="6,4">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="Filter results:" Margin="0,0,6,0" />
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding LiveCountText}"
+                               Foreground="{StaticResource TextMuted}" MinWidth="80"
+                               TextAlignment="Right" Margin="6,0,0,0" />
+                    <TextBox Text="{Binding LiveFilter, UpdateSourceTrigger=PropertyChanged}" Margin="0"
+                             ToolTip="Filters the rows already loaded, across Message, Source and Event ID. Does not re-query." />
+                </DockPanel>
+            </Border>
+
+            <DataGrid Grid.Row="1"
+                      ItemsSource="{Binding RowsView}"
+                      SelectedItem="{Binding SelectedRow}"
+                      AutoGenerateColumns="False"
+                      IsReadOnly="True"
+                      SelectionMode="Single"
+                      SelectionUnit="FullRow"
+                      HeadersVisibility="Column"
+                      CanUserAddRows="False"
+                      CanUserResizeRows="False"
+                      GridLinesVisibility="Horizontal"
+                      EnableRowVirtualization="True"
+                      EnableColumnVirtualization="False"
+                      VirtualizingPanel.IsVirtualizing="True"
+                      VirtualizingPanel.VirtualizationMode="Recycling"
+                      ScrollViewer.CanContentScroll="True"
+                      BorderThickness="0">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Time" Width="150"
+                                        Binding="{Binding TimeCreated, StringFormat='yyyy-MM-dd HH:mm:ss'}"
+                                        SortMemberPath="TimeCreated" />
+                    <DataGridTextColumn Header="Level" Width="80" Binding="{Binding Level}">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground"
+                                        Value="{Binding Level, Converter={StaticResource LevelColor}}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                                <Setter Property="VerticalAlignment" Value="Center" />
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Source" Width="190" Binding="{Binding ProviderName}" />
+                    <DataGridTextColumn Header="Event ID" Width="70" Binding="{Binding Id}" />
+                    <DataGridTextColumn Header="Message" Width="*" Binding="{Binding Message}">
+                        <!-- Trimmed rather than truncated to 200 characters as before: the full text
+                             stays available in the detail pane and in the CSV export. -->
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                <Setter Property="VerticalAlignment" Value="Center" />
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <GridSplitter Grid.Row="2" Height="4" HorizontalAlignment="Stretch"
+                          Background="{StaticResource BorderBrushSoft}" ResizeBehavior="PreviousAndNext" />
+
+            <TextBox Grid.Row="3"
+                     Text="{Binding DetailText, Mode=OneWay}"
+                     IsReadOnly="True"
+                     TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto"
+                     FontFamily="{StaticResource MonoFont}"
+                     FontSize="12"
+                     Background="{StaticResource DetailBackground}"
+                     BorderThickness="0"
+                     Margin="0"
+                     Padding="6" />
+        </Grid>
+
+        <!-- ============ Status bar ============ -->
+        <Border Grid.Row="4" Background="{StaticResource PanelBackground}"
+                BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="0,1,0,0" Padding="8,4">
+            <DockPanel LastChildFill="False">
+                <TextBlock DockPanel.Dock="Left" Text="{Binding StatusText}" />
+
+                <Button DockPanel.Dock="Left" Style="{StaticResource LinkButton}"
+                        Content="{Binding UpdateText}"
+                        Command="{Binding UpdateActionCommand}"
+                        Margin="12,0,0,0"
+                        Visibility="{Binding HasUpdate, Converter={StaticResource BoolToVisibility}}" />
+
+                <!-- Which host mode the app decided it is in. Visible on purpose: when a fallback
+                     kicks in over a remote session, this is what makes it explicable. -->
+                <TextBlock DockPanel.Dock="Right" Text="{Binding EnvironmentText}"
+                           Foreground="{StaticResource TextMuted}" Margin="12,0,0,0" />
+
+                <TextBlock DockPanel.Dock="Right" Text="{Binding CountText}"
+                           Foreground="{StaticResource TextMuted}" />
+
+                <ProgressBar DockPanel.Dock="Right" Width="140" Height="12" IsIndeterminate="True"
+                             Margin="12,0"
+                             Visibility="{Binding IsSearching, Converter={StaticResource BoolToVisibility}}" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

@@ -1,9 +1,0 @@
-<Solution>
-  <Folder Name="/src/">
-    <Project Path="src/EventLogViewer.Core/EventLogViewer.Core.csproj" />
-    <Project Path="src/EventLogViewer.Wpf/EventLogViewer.Wpf.csproj" />
-  </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/EventLogViewer.Tests/EventLogViewer.Tests.csproj" />
-  </Folder>
-</Solution>
