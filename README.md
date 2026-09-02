@@ -117,15 +117,17 @@ you invent gets a colour of its own. Description becomes the button's tooltip �
 if the preset's Event IDs are shared with unrelated sources, so the next person knows why it is
 scoped the way it is.
 
-**2. Edit the clauses.** Each clause queries one log; results from all of them are merged and
-sorted by time. This is how a preset spans more than one log — `Resource/Memory` and `DNS Errors`
-both do.
+**2. Edit the clauses.** Each clause queries one log, with its own Event IDs and providers.
 
-![Clause editing, showing log name, Event IDs and providers for one clause](docs/images/preset-editor-clauses.png)
+![A clause: log name, Event IDs and providers](docs/images/preset-editor-clauses.png)
 
 Leave **Event IDs** blank to match every event in the log, which is how the Active Directory
 presets work. Use **Providers** when an Event ID is reused across unrelated sources — see the two
 notes below.
+
+**Add Clause** gives a preset a second log. Results from every clause are merged and sorted
+together by time, which is how a preset spans more than one log — `Resource/Memory` and
+`DNS Errors` both do. The [JSON example below](#presetsjson-format) shows the two-clause shape.
 
 **3. Test it.** The **Test** button runs the preset exactly as edited and reports how many events
 it matches on this machine. It is the fastest way to catch a wrong Event ID, and it will tell you
@@ -141,10 +143,11 @@ to a built-in preset still reaches you.
 
 #### Adding your own
 
-**Add** creates a new preset; **Clone** copies the selected one, which is usually the faster start.
-A custom preset appears in the Quick Filters strip alongside the built-ins.
+**Add** creates a new preset, ready to fill in; **Clone** copies the selected one, which is usually
+the faster start. Either way it lands in the `Custom` group by default, and once saved it appears
+in the Quick Filters strip alongside the built-ins with a colour of its own.
 
-![A custom preset in the editor and the resulting button in the Quick Filters strip](docs/images/preset-custom.png)
+![A newly added preset in the editor, ready to be filled in](docs/images/preset-custom.png)
 
 #### Turning a built-in off
 
