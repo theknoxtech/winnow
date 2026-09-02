@@ -351,12 +351,29 @@ match the tag, and the release would misreport its own version if you forgot.)
 
 ### Code signing
 
-The released exe is **unsigned**. Unsigned executables running as SYSTEM on customer endpoints
-trigger SmartScreen warnings and are blocked outright by some EDR and AppLocker configurations.
-If you deploy this widely, sign it — [Azure Trusted
-Signing](https://learn.microsoft.com/azure/trusted-signing/) is the cheapest current route and
-gives a real publisher name. The release workflow has a place for the signing step; builds
-succeed unsigned if no certificate is configured.
+The released exe is **unsigned**, and the release workflow has no signing step yet.
+
+This matters most for EDR and application control: many endpoint products treat an unsigned binary
+running from a temp directory as SYSTEM as suspicious on its face, and AppLocker or WDAC publisher
+rules cannot cover an unsigned file at all — only path or hash rules, which are far more brittle
+to maintain.
+
+SmartScreen is a smaller factor than it first appears for this particular tool. The "Windows
+protected your PC" prompt is driven by Mark-of-the-Web, which browsers and mail clients attach to
+downloads; a file pushed over a ScreenConnect file transfer or copied from a UNC path usually
+carries no MOTW and so never triggers it.
+
+To sign, the signing step goes after `publish.ps1` and before `gh release create`, operating on
+`dist\Winnow.exe` — the final Costura-woven file, not the intermediate assemblies. Timestamping is
+not optional: without `/tr`, every signature ever produced becomes invalid the day the certificate
+expires.
+
+Since June 2023 the CA/Browser Forum baseline requires code signing private keys to live on
+FIPS 140-2 Level 2 hardware, so a downloadable `.pfx` is no longer an option. That makes the
+practical choice either a cloud signing service or a hardware token plus a self-hosted runner.
+[Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/) is the cheapest
+CI-friendly route at roughly $10/month, though organisation identities require a legal entity
+three or more years old.
 
 ## Updates
 
