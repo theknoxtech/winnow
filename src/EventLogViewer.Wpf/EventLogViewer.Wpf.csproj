@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>EventLogViewer.Wpf</RootNamespace>
+    <AssemblyName>EventLogViewer</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <Product>Windows Event Log Viewer</Product>
+    <AssemblyTitle>Windows Event Log Viewer</AssemblyTitle>
+
+    <!-- Version is stamped by the release build from the git tag. The update check reads it back
+         out of the assembly, so the tag stays the single source of truth. -->
+    <Version>1.2.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EventLogViewer.Core\EventLogViewer.Core.csproj" />
+  </ItemGroup>
+
+</Project>

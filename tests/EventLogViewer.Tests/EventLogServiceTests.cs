@@ -234,20 +234,51 @@ namespace EventLogViewer.Tests
             }
         }
 
+        /// <summary>
+        /// Synchronous IProgress. Progress&lt;T&gt; marshals its callback through the synchronization
+        /// context - with none installed that means the thread pool, so reports can arrive after
+        /// the assertion runs and the test fails intermittently.
+        /// </summary>
+        private sealed class ImmediateProgress : IProgress<int>
+        {
+            public List<int> Reports { get; } = new List<int>();
+            public void Report(int value) => Reports.Add(value);
+        }
+
         [Fact]
         public void ProgressIsReported()
         {
             var reader = new FakeEventLogReader().WithLog("System",
                 Enumerable.Range(1, 600).Select(i => Row("System", i, T0.AddSeconds(-i))).ToArray());
 
-            var reports = new List<int>();
+            var progress = new ImmediateProgress();
             new EventLogService(reader).Run(new EventQueryCriteria
             {
                 Clauses = { new QueryClause { LogName = "System" } },
                 MaxEvents = 1000
-            }, new Progress<int>(reports.Add));
+            }, progress);
 
-            Assert.NotEmpty(reports);
+            // Batched during streaming, then a final total once filtering and sorting are done.
+            Assert.NotEmpty(progress.Reports);
+            Assert.Equal(600, progress.Reports.Last());
+        }
+
+        [Fact]
+        public void ProgressReportsTheFinalCountAfterFiltering()
+        {
+            var reader = new FakeEventLogReader().WithLog("System",
+                Row("System", 1, T0, "keep"),
+                Row("System", 2, T0, "drop"));
+
+            var progress = new ImmediateProgress();
+            new EventLogService(reader).Run(new EventQueryCriteria
+            {
+                Clauses = { new QueryClause { LogName = "System" } },
+                MessageFilter = "keep",
+                MaxEvents = 100
+            }, progress);
+
+            Assert.Equal(1, progress.Reports.Last());
         }
 
         [Fact]
