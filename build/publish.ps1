@@ -55,26 +55,45 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed - not publishing.' }
 }
 
-Write-Host 'Building executable...' -ForegroundColor Cyan
+Write-Host 'Building and merging executable...' -ForegroundColor Cyan
 dotnet build $wpfProject -c $Configuration --nologo -v quiet `
+    '/p:MergeAssemblies=true' `
     "/p:Version=$assemblyVersion" `
     "/p:InformationalVersion=$assemblyVersion"
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 
-$built = Join-Path $repoRoot "src\Winnow.App\bin\$Configuration\net48\Winnow.exe"
-if (-not (Test-Path $built)) { throw "Expected build output not found: $built" }
+$built = Join-Path $repoRoot "src\Winnow.App\bin\$Configuration\net48\merged\Winnow.exe"
+if (-not (Test-Path $built)) {
+    throw "Merged executable not found: $built`n`nThe MergeAssemblies target did not run or ILRepack failed."
+}
 
 $distDir = Split-Path $OutputPath -Parent
 if (-not (Test-Path $distDir)) { New-Item -ItemType Directory -Path $distDir -Force | Out-Null }
 Copy-Item $built $OutputPath -Force
 
-# The whole point of the packaging step is that this is one file. If Costura silently stopped
-# embedding, the exe would still build and still run here - and then fail on a machine where the
-# loose DLLs were not copied alongside it. Verifying the count is what makes that non-silent.
-$loose = Get-ChildItem (Split-Path $built -Parent) -Filter *.dll -ErrorAction SilentlyContinue
-if ($loose) {
-    Write-Warning ("Expected no loose DLLs beside the exe, found: " + ($loose.Name -join ', '))
-    Write-Warning 'Costura may not be embedding dependencies - the exe is probably not standalone.'
+# The point of the packaging step is that this is genuinely one file. If the merge silently
+# stopped happening, the exe would still build and still run here - and then fail on a machine
+# where the loose DLLs were not copied alongside it.
+#
+# Checked by looking for the type names in the assembly's metadata strings rather than by
+# reflection: ReflectionOnlyLoadFrom does not exist on .NET Core, so a reflection-based check
+# would work under Windows PowerShell and throw under PowerShell 7.
+$bytes = [System.IO.File]::ReadAllBytes($OutputPath)
+$text = [System.Text.Encoding]::ASCII.GetString($bytes)
+
+foreach ($marker in @('JsonConvert', 'PresetStore', 'WindowsEventLogReader')) {
+    if ($text -notmatch [regex]::Escape($marker)) {
+        throw "'$marker' is not present in the merged exe - ILRepack did not merge everything."
+    }
+}
+Write-Host 'Merge verified: merged types are present in the single file.'
+
+# Guards the reason we left Costura. Costura embedded each dependency as a compressed resource and
+# loaded it from memory at run time, which reads as packer behaviour to a machine-learning
+# classifier and got the v1.3.0 release flagged as Trojan:Win32/Wacatac.B!ml. If anything
+# reintroduces that pattern, fail loudly rather than ship a binary that gets quarantined.
+if ($text -match 'costura\.[a-z0-9_.]+\.compressed') {
+    throw 'The merged exe contains Costura-style compressed payloads. That pattern is what got v1.3.0 flagged by Defender - do not ship this.'
 }
 
 $size = [math]::Round((Get-Item $OutputPath).Length / 1MB, 2)

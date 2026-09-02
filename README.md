@@ -11,7 +11,7 @@ user, host, or IP.
 Event Viewer will show you everything. Winnow's job is the opposite: 36 curated presets that go
 straight to the events that explain what actually went wrong on the machine in front of you.
 
-Built for remote support: one `Winnow.exe`, about 400 KB, no installer and no prerequisites. It
+Built for remote support: one `Winnow.exe`, under a megabyte, no installer and no prerequisites. It
 targets .NET Framework 4.8, which ships in-box on Windows 10 1903+, Windows 11, and Server 2019+,
 and it is designed to work correctly inside a **ScreenConnect Backstage** session.
 
@@ -318,7 +318,7 @@ not needed — the projects target .NET Framework 4.8 but build with the SDK alo
 ```
 
 Runs the tests and produces a single self-contained `dist\Winnow.exe`. Dependencies are
-embedded with [Costura](https://github.com/Fody/Costura), so the exe has no loose DLLs beside it.
+merged in with [ILRepack](https://github.com/gluck/il-repack), so the exe has no loose DLLs beside it.
 
 ```powershell
 dotnet test                             # tests only
@@ -365,15 +365,22 @@ What that does and does not cost you:
   PC" prompt is driven by Mark-of-the-Web, which browsers and mail clients attach to downloads. A
   file pushed over a ScreenConnect file transfer, or copied from a UNC path, usually carries no
   MOTW and never triggers it. Downloading the exe from Releases in a browser *will* trigger it.
-- **AV heuristics are a much smaller problem than they were.** The previous PowerShell version was
-  packed with ps2exe, which carries its own detection signatures and gets flagged routinely. A
-  plain C# WPF binary reading the event log does not look like malware behaviourally.
+- **AV heuristics still bite, and how the exe is packaged matters more than you would expect.**
+  v1.3.0 was flagged by Defender as `Trojan:Win32/Wacatac.B!ml` — a machine-learning verdict, not a
+  signature match. The cause was the packaging, not the code: it used
+  [Costura](https://github.com/Fody/Costura), which embeds each dependency as a compressed
+  resource and hooks `AssemblyResolve` to decompress and load it from memory at run time. That is
+  behaviourally what a packer does, and an unsigned binary with no reputation doing it scores
+  badly. Verified by scanning the same code built both ways: with Costura, flagged; without it,
+  clean. The build now uses ILRepack, which merges the IL at build time into one ordinary
+  assembly — same single file, no run-time loading, no detection. `build\publish.ps1` fails the
+  build if that pattern ever comes back.
 - **Application control is the real loss.** A customer's security team cannot write an AppLocker
   or WDAC *publisher* rule against an unsigned file. They need a hash rule, which is why every
   release publishes its SHA-256 (below).
 
 If you fork this and do have a certificate, the signing step goes after `publish.ps1` and before
-`gh release create`, operating on `dist\Winnow.exe` — the final Costura-woven file, not the
+`gh release create`, operating on `dist\Winnow.exe` — the final ILRepack-merged file, not the
 intermediate assemblies. Timestamp it (`/tr` plus `/td sha256`), or every signature you produce
 becomes invalid the day the certificate expires.
 

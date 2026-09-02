@@ -32,11 +32,52 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Embeds the referenced assemblies into the exe, so a single file can be dropped into a
-         Backstage session with nothing alongside it. -->
-    <PackageReference Include="Costura.Fody" Version="5.7.0" PrivateAssets="all" />
-    <PackageReference Include="Fody" Version="6.8.1" PrivateAssets="all" />
+    <!--
+      Merges the dependencies into one exe, so a single file can be dropped into a Backstage
+      session with nothing alongside it.
+
+      This was Costura.Fody until Defender started flagging the released binary as
+      Trojan:Win32/Wacatac.B!ml. Costura embeds each dependency as a DEFLATE-compressed resource
+      and hooks AssemblyResolve to decompress and load it from memory at run time - which is,
+      behaviourally, exactly what a packer or dropper does, and an unsigned binary with zero
+      reputation doing it scores badly with a machine-learning classifier. Confirmed by scanning:
+      the same code built without Costura is clean, with Costura it is flagged.
+
+      ILRepack instead merges the IL at build time into one ordinary assembly. No compressed
+      payloads, no run-time assembly resolution, nothing for a heuristic to react to. The cost is
+      size - roughly 0.8 MB rather than 0.4 MB, since nothing is compressed.
+
+      ExcludeAssets="all" because this is a build-time tool, not a reference.
+    -->
+    <PackageReference Include="ILRepack" Version="2.0.36" ExcludeAssets="all"
+                      GeneratePathProperty="true" PrivateAssets="all" />
   </ItemGroup>
+
+  <!--
+    Runs only when asked (build\publish.ps1 sets it), so ordinary `dotnet build` and `dotnet test`
+    are untouched. Merging on every build would also hand the test project an exe containing
+    duplicate copies of types it already references.
+  -->
+  <Target Name="MergeAssemblies" AfterTargets="Build" Condition="'$(MergeAssemblies)' == 'true'">
+    <PropertyGroup>
+      <MergedDir>$(OutputPath)merged\</MergedDir>
+      <ILRepackExe>$(PkgILRepack)\tools\ILRepack.exe</ILRepackExe>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <!-- Everything the build copied next to the exe, so a transitive dependency appearing later
+           is merged automatically rather than silently left as a loose file. -->
+      <MergeInput Include="$(OutputPath)*.dll" />
+    </ItemGroup>
+
+    <MakeDir Directories="$(MergedDir)" />
+
+    <!-- The "." after $(OutputPath) is load-bearing: OutputPath ends in a backslash, and a
+         backslash immediately before a closing quote escapes that quote, mangling the argument. -->
+    <Exec Command="&quot;$(ILRepackExe)&quot; /out:&quot;$(MergedDir)$(AssemblyName).exe&quot; /target:winexe /targetplatform:v4 /lib:&quot;$(OutputPath).&quot; &quot;$(OutputPath)$(AssemblyName).exe&quot; @(MergeInput->'&quot;%(FullPath)&quot;', ' ')" />
+
+    <Message Importance="high" Text="Merged @(MergeInput->Count()) assemblies into $(MergedDir)$(AssemblyName).exe" />
+  </Target>
 
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
