@@ -24,6 +24,9 @@ install — copy the single file wherever you need it.
 
 Right-click → *Run as Administrator* if you need the Security log (or any preset that reads it).
 
+The binary is unsigned, so each release publishes its SHA-256 — worth
+[checking](#verifying-a-download) before you put it on a customer machine.
+
 ### In ScreenConnect Backstage
 
 Copy the exe to the machine and run it from the Backstage command prompt:
@@ -349,31 +352,52 @@ There is no version constant to update — the version comes from the tag and is
 the assembly at runtime. (The PowerShell version required updating `$script:AppVersion` by hand to
 match the tag, and the release would misreport its own version if you forgot.)
 
-### Code signing
+### Code signing, and why there isn't any
 
-The released exe is **unsigned**, and the release workflow has no signing step yet.
+Winnow is **unsigned, by choice**. Code signing certificates are a recurring cost, and since the
+June 2023 CA/Browser Forum baseline the private key must live on FIPS 140-2 Level 2 hardware, so
+there is no longer a cheap path — a downloadable `.pfx` is not an option, leaving a cloud signing
+subscription or a hardware token plus a self-hosted build runner.
 
-This matters most for EDR and application control: many endpoint products treat an unsigned binary
-running from a temp directory as SYSTEM as suspicious on its face, and AppLocker or WDAC publisher
-rules cannot cover an unsigned file at all — only path or hash rules, which are far more brittle
-to maintain.
+What that does and does not cost you:
 
-SmartScreen is a smaller factor than it first appears for this particular tool. The "Windows
-protected your PC" prompt is driven by Mark-of-the-Web, which browsers and mail clients attach to
-downloads; a file pushed over a ScreenConnect file transfer or copied from a UNC path usually
-carries no MOTW and so never triggers it.
+- **SmartScreen is largely moot** for how this tool is distributed. The "Windows protected your
+  PC" prompt is driven by Mark-of-the-Web, which browsers and mail clients attach to downloads. A
+  file pushed over a ScreenConnect file transfer, or copied from a UNC path, usually carries no
+  MOTW and never triggers it. Downloading the exe from Releases in a browser *will* trigger it.
+- **AV heuristics are a much smaller problem than they were.** The previous PowerShell version was
+  packed with ps2exe, which carries its own detection signatures and gets flagged routinely. A
+  plain C# WPF binary reading the event log does not look like malware behaviourally.
+- **Application control is the real loss.** A customer's security team cannot write an AppLocker
+  or WDAC *publisher* rule against an unsigned file. They need a hash rule, which is why every
+  release publishes its SHA-256 (below).
 
-To sign, the signing step goes after `publish.ps1` and before `gh release create`, operating on
-`dist\Winnow.exe` — the final Costura-woven file, not the intermediate assemblies. Timestamping is
-not optional: without `/tr`, every signature ever produced becomes invalid the day the certificate
-expires.
+If you fork this and do have a certificate, the signing step goes after `publish.ps1` and before
+`gh release create`, operating on `dist\Winnow.exe` — the final Costura-woven file, not the
+intermediate assemblies. Timestamp it (`/tr` plus `/td sha256`), or every signature you produce
+becomes invalid the day the certificate expires.
 
-Since June 2023 the CA/Browser Forum baseline requires code signing private keys to live on
-FIPS 140-2 Level 2 hardware, so a downloadable `.pfx` is no longer an option. That makes the
-practical choice either a cloud signing service or a hardware token plus a self-hosted runner.
-[Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/) is the cheapest
-CI-friendly route at roughly $10/month, though organisation identities require a legal entity
-three or more years old.
+### Verifying a download
+
+Every release publishes the SHA-256 of `Winnow.exe`, both in the release notes and as a
+`Winnow.exe.sha256` asset. Since the binary is unsigned, this is what stands in for a publisher
+signature — check it before running the file on a customer machine:
+
+```powershell
+(Get-FileHash Winnow.exe -Algorithm SHA256).Hash
+```
+
+That value is also what a security team needs to whitelist Winnow with an AppLocker or WDAC hash
+rule. It changes with every release, so the rule has to be updated each time — that is the
+practical cost of shipping unsigned.
+
+#### Whitelisting on machines you manage
+
+For endpoints under your own RMM or GPO, there is a middle path that costs nothing: sign the exe
+with a self-signed certificate and push that root into Trusted Publishers on the machines you
+manage. Publisher rules then work on those endpoints without buying anything. It does nothing for
+machines you do not manage, and deploying a root certificate across a customer estate is a
+decision that should be theirs to agree to explicitly, not something to do quietly.
 
 ## Updates
 
