@@ -10,6 +10,11 @@ $currentUser    = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal      = New-Object Security.Principal.WindowsPrincipal($currentUser)
 $script:isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $script:currentResults = $null
+
+# Bump this alongside the version in each release tag (see README > Releasing a new version).
+$script:AppVersion = '1.1.0'
+$script:UpdateCheckApiUrl = 'https://api.github.com/repos/theknoxtech/PowerShell-Event-Log-Viewer/releases/latest'
+$script:LatestReleaseUrl  = $null
 #endregion
 
 #region 2 - Constants and Presets
@@ -93,6 +98,24 @@ $script:GroupColors = @{
 #endregion
 
 #region 3 - Helper Functions
+
+function Test-ForUpdate {
+    # Never let this interrupt the user - offline machines, outbound-blocked networks, and
+    # GitHub rate limits are all normal here, so any failure is silently ignored.
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $release = Invoke-RestMethod -Uri $script:UpdateCheckApiUrl -TimeoutSec 4 `
+            -Headers @{ 'User-Agent' = 'EventLogViewer' } -ErrorAction Stop
+
+        $latestVersion = [version]($release.tag_name -replace '^v', '')
+        $currentVersion = [version]$script:AppVersion
+        if ($latestVersion -gt $currentVersion) {
+            $script:LatestReleaseUrl = $release.html_url
+            return $release.tag_name
+        }
+    } catch { }
+    return $null
+}
 
 function Get-EventsForPreset {
     param($Preset, $MaxEvents)
@@ -653,6 +676,13 @@ $lblCount.Text      = ''
 $lblCount.Spring    = $false
 $lblCount.Alignment = 'Right'
 
+$lblUpdate            = New-Object System.Windows.Forms.ToolStripStatusLabel
+$lblUpdate.Text       = ''
+$lblUpdate.Visible    = $false
+$lblUpdate.IsLink     = $true
+$lblUpdate.ForeColor  = [System.Drawing.Color]::FromArgb(0,102,204)
+$lblUpdate.Add_Click({ if ($script:LatestReleaseUrl) { Start-Process $script:LatestReleaseUrl } })
+
 $spacer             = New-Object System.Windows.Forms.ToolStripStatusLabel
 $spacer.Spring      = $true
 
@@ -663,6 +693,7 @@ $progressBar.Width          = 160
 $progressBar.Visible        = $false
 
 $null = $status.Items.Add($lblStatus)
+$null = $status.Items.Add($lblUpdate)
 $null = $status.Items.Add($spacer)
 $null = $status.Items.Add($lblCount)
 $null = $status.Items.Add($progressBar)
@@ -949,6 +980,25 @@ $mainForm.AcceptButton = $btnSearch
 #endregion
 
 #region 7 - Launch
-$mainForm.Add_Shown({ $cboLogSource.Focus() })
+
+# One-shot, deferred update check so it never delays the window showing up. Runs on the UI
+# thread (not a background thread/job - see Region 4's note on why that's unreliable here),
+# with a short request timeout so a slow/blocked network can only ever cost a few seconds,
+# well after the window is already visible and usable.
+$updateTimer = New-Object System.Windows.Forms.Timer
+$updateTimer.Interval = 1500
+$updateTimer.Add_Tick({
+    $updateTimer.Stop()
+    $newVersion = Test-ForUpdate
+    if ($newVersion) {
+        $lblUpdate.Text    = "Update available: $newVersion (click to download)"
+        $lblUpdate.Visible = $true
+    }
+})
+
+$mainForm.Add_Shown({
+    $cboLogSource.Focus()
+    $updateTimer.Start()
+})
 [System.Windows.Forms.Application]::Run($mainForm)
 #endregion

@@ -10,6 +10,8 @@ powershell.exe -File EventLogViewer.ps1
 
 Or download the latest `EventLogViewer.exe` from [Releases](../../releases) — no PowerShell console window, just double-click to run. Right-click → "Run as Administrator" if you need to query the Security log (or any preset that reads it).
 
+A few seconds after launch, the app checks GitHub for a newer release in the background and, if one exists, shows a clickable "Update available" link in the status bar — click it to open the release page. This never blocks startup or shows an error if the machine is offline or can't reach GitHub; it just silently skips the check.
+
 ## Using the app
 
 ### Manual filters (top of the window)
@@ -137,9 +139,11 @@ Produces `dist\EventLogViewer.exe`.
 
 ## Releasing a new version
 
-Push a version tag matching `v*.*.*` and a GitHub Actions workflow builds the exe and attaches it to a new [Release](../../releases) automatically:
+1. Update `$script:AppVersion` near the top of `EventLogViewer.ps1` to match the version you're about to tag (this is what the in-app update check compares against - if you forget, the new release won't recognize itself as up to date, and everyone still on the old version will correctly see the update prompt, but the newly-released version's own check will be one release behind until the next bump catches it up).
+2. Commit that change.
+3. Push a version tag matching `v*.*.*` — a GitHub Actions workflow builds the exe and attaches it to a new [Release](../../releases) automatically:
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
