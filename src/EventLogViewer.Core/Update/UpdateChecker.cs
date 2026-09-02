@@ -109,7 +109,16 @@ namespace EventLogViewer.Core.Update
             }
         }
 
-        /// <summary>Turns a "v1.2.0" style tag into a Version. Null when it is not a version at all.</summary>
+        /// <summary>
+        /// Turns a "v1.2.0" style tag or informational version into a Version.
+        /// Null when it is not a version at all.
+        /// </summary>
+        /// <remarks>
+        /// Handles both semver suffixes, because both actually occur here. A release tag may carry
+        /// a pre-release part ("v1.3.0-beta.1"), and the SDK appends build metadata to the
+        /// assembly's informational version ("1.3.0+a1b2c3d") - which is the very string this has
+        /// to parse to know what version is running. Version.TryParse rejects either one.
+        /// </remarks>
         internal static Version ParseVersion(string tag)
         {
             if (string.IsNullOrWhiteSpace(tag)) return null;
@@ -118,7 +127,10 @@ namespace EventLogViewer.Core.Update
             if (text.StartsWith("v", StringComparison.OrdinalIgnoreCase))
                 text = text.Substring(1);
 
-            // Strip any pre-release suffix ("1.3.0-beta.1"), which Version cannot parse.
+            // Build metadata first: "1.3.0-beta.1+sha" puts the '+' after the '-'.
+            var plus = text.IndexOf('+');
+            if (plus > 0) text = text.Substring(0, plus);
+
             var dash = text.IndexOf('-');
             if (dash > 0) text = text.Substring(0, dash);
 

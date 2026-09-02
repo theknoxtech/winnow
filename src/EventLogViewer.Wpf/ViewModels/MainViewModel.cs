@@ -283,7 +283,12 @@ namespace EventLogViewer.Wpf.ViewModels
 
         #region Searches
 
-        private async Task SearchAsync()
+        // The search methods are internal, not private, so tests can await them. The commands
+        // above are fire-and-forget by necessity - ICommand.Execute returns void - which makes
+        // them useless as a test entry point: the assertion runs before the query completes.
+
+
+        internal async Task SearchAsync()
         {
             var logName = (SelectedLogSource ?? "").Trim();
             if (string.IsNullOrEmpty(logName))
@@ -320,7 +325,7 @@ namespace EventLogViewer.Wpf.ViewModels
             await RunAsync(token => _service.RunAsync(criteria, Progress(), token));
         }
 
-        private async Task PresetSearchAsync(PresetDefinition preset)
+        internal async Task PresetSearchAsync(PresetDefinition preset)
         {
             if (preset == null) return;
             if (preset.RequiresElevation && !ConfirmElevation("Security")) return;
@@ -337,7 +342,7 @@ namespace EventLogViewer.Wpf.ViewModels
             await RunAsync(token => _service.RunAsync(criteria, Progress(), token), preset.Label);
         }
 
-        private async Task AppSearchAsync()
+        internal async Task AppSearchAsync()
         {
             var app = (AppName ?? "").Trim();
             if (string.IsNullOrEmpty(app))
@@ -350,7 +355,7 @@ namespace EventLogViewer.Wpf.ViewModels
                 app, MaxEvents, (Keyword ?? "").Trim(), Progress(), token));
         }
 
-        private async Task SecuritySearchAsync()
+        internal async Task SecuritySearchAsync()
         {
             var u = (SecUser ?? "").Trim();
             var h = (SecHost ?? "").Trim();
@@ -494,7 +499,7 @@ namespace EventLogViewer.Wpf.ViewModels
 
         #endregion
 
-        private void Clear()
+        internal void Clear()
         {
             SelectedLogSource = LogSources[0];
             SelectedLevel = Levels[0];
@@ -525,7 +530,7 @@ namespace EventLogViewer.Wpf.ViewModels
         /// path under the Windows temp directory is also the more useful behaviour there, since the
         /// technician retrieves the file over ScreenConnect's file transfer rather than by browsing.
         /// </remarks>
-        private void Export()
+        internal void Export()
         {
             var rows = RowsView.Cast<EventRow>().ToList();
             if (rows.Count == 0) return;

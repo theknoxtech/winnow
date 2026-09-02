@@ -62,6 +62,26 @@ namespace EventLogViewer.Core.Hosting
                 : who;
         }
 
+        /// <summary>
+        /// Builds a specific environment, so the Backstage fallbacks can be tested without a
+        /// Backstage session to run in. Those fallbacks are the whole point of the class and
+        /// otherwise could not be verified until someone tried it on a customer's machine.
+        /// </summary>
+        internal static HostEnvironment CreateForTesting(bool isSystemAccount, bool isElevated,
+                                                         bool isAlternateDesktop,
+                                                         string desktopName = null,
+                                                         string userName = null)
+        {
+            return new HostEnvironment
+            {
+                IsSystemAccount = isSystemAccount,
+                IsElevated = isElevated,
+                IsAlternateDesktop = isAlternateDesktop,
+                DesktopName = desktopName,
+                UserName = userName
+            };
+        }
+
         public static HostEnvironment Detect()
         {
             var env = new HostEnvironment();

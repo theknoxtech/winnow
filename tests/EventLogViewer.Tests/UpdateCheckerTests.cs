@@ -16,9 +16,26 @@ namespace EventLogViewer.Tests
         [InlineData("v1.2", "1.2")]
         [InlineData("v1.2.0.4", "1.2.0.4")]
         [InlineData("v1.3.0-beta.1", "1.3.0")]
+        // The SDK stamps AssemblyInformationalVersion as "<version>+<commit sha>", and that is the
+        // exact string CurrentVersion() has to read back to know what is running. Parsing it as
+        // null would make the app think it had no version and never report an update.
+        [InlineData("1.3.0+98b6a3589e88542f6f301c157957f1b3f118c9f3", "1.3.0")]
+        [InlineData("v1.3.0-beta.1+a1b2c3d", "1.3.0")]
         public void ParsesVersionTags(string tag, string expected)
         {
             Assert.Equal(Version.Parse(expected), UpdateChecker.ParseVersion(tag));
+        }
+
+        [Fact]
+        public void TheRunningVersionIsNotZero()
+        {
+            // Catches the whole chain being broken - a version that fails to parse degrades to
+            // 0.0.0.0, which would silently make every release look newer.
+            var version = UpdateChecker.CurrentVersion();
+
+            Assert.NotNull(version);
+            Assert.True(version > new Version(0, 0, 0, 0),
+                "CurrentVersion() returned " + version + "; the assembly version is not being read.");
         }
 
         [Theory]

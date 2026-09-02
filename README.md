@@ -1,149 +1,298 @@
 # Windows Event Log Viewer
 
-A single-file PowerShell + WinForms GUI for browsing Windows Event Logs, with quick-filter presets for common IT/security investigations, application-name search, and security-identity search (by user, host, or IP).
+A single-file Windows desktop app for browsing Windows Event Logs, with quick-filter presets for
+common IT and security investigations, application-name search, and security-identity search by
+user, host, or IP.
+
+Built for remote support: one `EventLogViewer.exe`, about 400 KB, no installer and no
+prerequisites. It targets .NET Framework 4.8, which ships in-box on Windows 10 1903+, Windows 11,
+and Server 2019+, and it is designed to work correctly inside a **ScreenConnect Backstage**
+session.
 
 ## Running
 
-```powershell
-powershell.exe -File EventLogViewer.ps1
+Download `EventLogViewer.exe` from [Releases](../../releases) and run it. That is the whole
+install — copy the single file wherever you need it.
+
+Right-click → *Run as Administrator* if you need the Security log (or any preset that reads it).
+
+### In ScreenConnect Backstage
+
+Copy the exe to the machine and run it from the Backstage command prompt:
+
+```bat
+C:\Windows\Temp\EventLogViewer.exe
 ```
 
-Or download the latest `EventLogViewer.exe` from [Releases](../../releases) — no PowerShell console window, just double-click to run. Right-click → "Run as Administrator" if you need to query the Security log (or any preset that reads it).
+Backstage runs processes as `NT AUTHORITY\SYSTEM` on a separate desktop, which changes a few
+things. The app detects this and adapts:
 
-A few seconds after launch, the app checks GitHub for a newer release in the background and, if one exists, shows a clickable "Update available" link in the status bar — click it to open the release page. This never blocks startup or shows an error if the machine is offline or can't reach GitHub; it just silently skips the check.
+| | Behaviour in Backstage |
+|---|---|
+| **Security log** | Works with no elevation prompt — the process is already SYSTEM. |
+| **CSV export** | Skips the file dialog (unreliable on an alternate desktop) and writes to `%TEMP%\EventLogViewer\`, then copies the path to the clipboard. Retrieve it with ScreenConnect file transfer. |
+| **Update link** | Copies the release URL instead of launching a browser as SYSTEM. |
+| **Window size** | Sized from the actual desktop, so it fits a 1024×768 Backstage screen. |
+
+The status bar shows which mode the app detected, e.g. `SYSTEM · Backstage desktop`, so you can
+tell at a glance which behaviour is in effect.
+
+### Command line
+
+```
+EventLogViewer.exe [--presets <path>] [--trace-bindings]
+
+  --presets <path>   Load preset overrides from the given presets.json.
+                     Defaults to presets.json beside the executable, if present.
+  --trace-bindings   Write WPF data-binding warnings to bindings.log. Diagnostics only.
+  --help             Show usage.
+```
 
 ## Using the app
 
-### Manual filters (top of the window)
+### Manual filters
 
 | Field | What it does |
 |---|---|
-| **Log** | Log to query. Type any log name (e.g. `Application`, `System`, `Security`) — not limited to the dropdown list. |
+| **Log** | Log to query. Editable — type any log name, not just the listed ones. |
 | **Level** | Any / Critical / Error / Warning / Information / Verbose. |
-| **Event ID** | Comma-separated Event IDs, e.g. `7045,7036`. Leave blank for all. |
-| **Max Events** | Cap on how many events are pulled back (100–50,000). |
-| **Keyword** | Client-side substring filter against the event message — works alongside a manual search, a preset, or either search below. |
-| **From / To** | Optional date/time range (check the box to enable). |
+| **Event ID** | Comma-separated Event IDs, e.g. `7045,7036`. Blank for all. |
+| **Max Events** | Cap on how many events are pulled back. |
+| **Keyword** | Substring filter against the event message. Applies on top of a preset or either search below. |
+| **From / To** | Optional date range (tick the box to enable). |
 
-Click **Search**, or press Enter in any of the fields above.
-
-### Application search
-
-Enter an application or product name (e.g. `Chrome`, `SQL Server`) and click **Find App Events**. This discovers every event provider whose name matches, pulls from every log those providers write to, and also checks the Application log's generic crash/hang IDs (1000/1001/1002) in case the app's own crash reports were logged under a generic "Application Error" source instead of its own provider name.
-
-### Security identity search
-
-Enter a **User**, **Host**, and/or **IP** (any combination — at least one is required) and click **Search Security Events**. This searches a curated set of identity-relevant Security log events (logon/logoff, explicit-credential logons, special-privilege logons, account management, group membership changes, lockouts, Kerberos) and keeps only the ones whose message text matches every field you filled in. Requires Administrator privileges to read the Security log.
+Press **Search**, or Enter, or F5. **Cancel** (or Escape) stops a running query — useful when a
+50,000-event search on a busy server is taking longer than expected.
 
 ### Quick Filters
 
-One-click presets — see the full reference below. Clicking one sets the Log field and runs the search immediately; the Keyword box, if filled in, still applies on top of it.
+One-click presets, colour-coded by group — see the reference below. Clicking one sets the Log
+field and runs immediately; the Keyword box, if filled in, still applies on top.
 
-### Results grid
+### Application search
 
-- Click a row to see its full message in the detail pane below.
-- **Filter results** (above the grid) does a live substring filter across Message, Source, and Event ID without re-querying the log.
-- **Export CSV** saves the current result set (Time, Level, Source, Event ID, truncated Message).
+Enter an application or product name (e.g. `Chrome`, `SQL Server`) and click **Find App Events**.
+This finds every event provider whose name matches, queries every log those providers write to,
+and also checks the Application log's generic crash/hang IDs (1000/1001/1002) in case the app's
+crashes were logged under "Application Error" rather than its own provider name.
+
+### Security identity search
+
+Enter a **User**, **Host**, and/or **IP** — any combination, at least one — and click **Search
+Security Events**. Searches a curated set of identity-relevant Security events (logon/logoff,
+explicit-credential and special-privilege logons, account management, group membership changes,
+lockouts, Kerberos) and keeps only rows matching every field you filled in. Needs Administrator,
+or Backstage.
+
+### Results
+
+- Click a row to see its full message in the detail pane.
+- **Filter results** narrows the rows already loaded, across Message, Source and Event ID, without
+  re-querying.
+- **Export CSV** writes what the filter currently shows.
+
+## Presets
+
+Presets are data, not code. The 36 built-in presets are embedded in the exe; an optional
+`presets.json` beside it (or at `--presets <path>`) adds to, changes, or hides them.
+
+Edit them in the app with **Edit Presets…**, or by hand. The **Test** button runs a preset as
+edited and reports how many events it matches, which is the quickest way to catch a wrong
+Event ID.
+
+### presets.json format
+
+A preset file only needs the presets it changes — everything else keeps the built-in definition,
+so a later fix to a built-in still reaches you.
+
+```json
+{
+  "presets": [
+    {
+      "id": "custom.our-line-of-business-app",
+      "group": "Custom",
+      "label": "LOB App Errors",
+      "description": "Errors from our line-of-business application",
+      "clauses": [
+        { "logName": "Application", "eventIds": [4001, 4002], "providerNames": ["AcmeLOB"] }
+      ]
+    },
+    { "id": "printing.print-jobs", "disabled": true }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable identity. Matching a built-in `id` **replaces** it; a new `id` **adds** a preset. Do not change an id once it is in use. |
+| `group` | Controls the button colour and grouping. A new group gets its own colour automatically. |
+| `label` | Button text. |
+| `description` | Button tooltip. |
+| `disabled` | `true` hides a built-in preset. The rest of its definition can be omitted. |
+| `clauses` | One or more logs to query. Results are merged and sorted by time. |
+| `clauses[].logName` | Log to query. Required. |
+| `clauses[].eventIds` | Event IDs. Omit or leave empty for every event in the log. |
+| `clauses[].providerNames` | Restricts to specific sources. Important when an Event ID is reused. |
+| `messageFilter` | Substring applied to the message after the query runs. |
+
+**Why `providerNames` matters:** Windows reuses small Event IDs across unrelated providers in the
+same log — System-log ID `1` is used by dozens of sources. Without a provider scope, a preset on
+ID 1 returns a flood of unrelated events.
+
+**Why `messageFilter` exists:** some Event IDs are shared with no distinguishing provider at all.
+Service Control Manager's 7031/7034 are emitted for *every* service on the machine, and only the
+message text says which one, so the Spooler preset filters on the text.
+
+> Note: a provider name containing an apostrophe cannot be expressed in an event log query — the
+> log implements a subset of XPath with no `concat()`, and XPath has no escape inside a string
+> literal. Such a name is applied as a post-query filter instead, which still gives correct
+> results but reads more of the log to do it.
 
 ## Preset reference
 
-Windows reuses small Event IDs across unrelated providers within the same log (e.g. System-log ID `1` is used by dozens of different sources). Where that's a real risk, presets below are scoped to a specific `ProviderName`, or post-filtered by message text — noted in the "Scoped by" column. Presets without a note filter on Log + Event ID alone.
+Windows reuses small Event IDs across unrelated providers within the same log. Where that is a
+real risk, presets below are scoped to a specific provider or post-filtered by message text —
+shown in the "Scoped by" column. Presets without a note filter on log and Event ID alone.
 
-### System Changes
-
-| Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
-|---|---|---|---|---|
-| Software Installs | Application | 11707, 1033, 1034 | MsiInstaller product install/remove | |
-| Service Changes | System | 7045, 7036 | Any service installed or changed running/stopped state | |
-| Driver Installs | System | 7045 | Kernel/file system driver installs specifically | message contains "driver" |
-| Startup/Shutdown | System | 6005, 6006, 1074, 6008 | Boot, clean shutdown, user-initiated shutdown, unexpected shutdown | |
+<!-- PRESET-REFERENCE:START - generated by build\Generate-PresetDocs.ps1, do not edit by hand -->
 
 ### Account/Policy
 
 | Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
 |---|---|---|---|---|
-| User Acct Changes | Security | 4720, 4722, 4725, 4726, 4738 | Account created, enabled, disabled, deleted, modified | |
-| Policy Changes | Security | 4719, 4739 | System/domain audit policy changed | |
-| Logon Events | Security | 4624, 4625, 4634, 4647 | Successful/failed logon and logoff | |
-| Account Lockouts | Security | 4740 | Account locked out after failed logon attempts | |
-| Group Membership Chg | Security | 4728, 4729, 4732, 4733, 4756, 4757 | Members added/removed from global/local/universal security groups | |
-| Kerberos Auth | Security | 4768, 4769, 4771, 4776 | TGT/service-ticket requests, pre-auth failures, credential validation | |
-| Explicit Credential | Security | 4648 | Logon using explicit credentials (RunAs) — possible lateral movement | |
-| Special Privileges | Security | 4672 | Admin-equivalent logon — sensitive privileges assigned | |
-| Scheduled Task Chg | Security | 4698–4702 | Scheduled task created, deleted, enabled, disabled, or updated | |
-| Audit Log Cleared | Security | 1102 | Security audit log was cleared — investigate immediately | |
-| PS Script Block Log | Microsoft-Windows-PowerShell/Operational | 4104 | Logged PowerShell script block text (requires Script Block Logging GPO) | |
-| Defender Detections | Microsoft-Windows-Windows Defender/Operational | 1116, 1117 | Malware detected / remediation action taken | |
+| User Acct Changes | Security | 4720, 4722, 4725, 4726, 4738 | Account created, enabled, disabled, deleted, modified |  |
+| Policy Changes | Security | 4719, 4739 | System and domain audit policy changed |  |
+| Logon Events | Security | 4624, 4625, 4634, 4647 | Successful/failed logon and logoff |  |
+| Account Lockouts | Security | 4740 | User account locked out after failed logon attempts |  |
+| Group Membership Chg | Security | 4728, 4729, 4732, 4733, 4756, 4757 | Members added/removed: global, local, universal security groups |  |
+| Kerberos Auth | Security | 4768, 4769, 4771, 4776 | TGT/service-ticket requests, pre-auth failures, credential validation |  |
+| Explicit Credential | Security | 4648 | Logon using explicit credentials (RunAs) - possible lateral movement |  |
+| Special Privileges | Security | 4672 | Admin-equivalent logon - sensitive privileges assigned |  |
+| Scheduled Task Chg | Security | 4698, 4699, 4700, 4701, 4702 | Scheduled task created, deleted, enabled, disabled, or updated |  |
+| Audit Log Cleared | Security | 1102 | Security audit log was cleared - investigate immediately |  |
+| PS Script Block Log | Microsoft-Windows-PowerShell/Operational | 4104 | Logged PowerShell script block text (requires Script Block Logging GPO) |  |
+| Defender Detections | Microsoft-Windows-Windows Defender/Operational | 1116, 1117 | Malware detected / remediation action taken |  |
+
+### Active Directory
+
+| Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
+|---|---|---|---|---|
+| AD Replication (All) | Directory Service | _all_ | All Directory Service log entries - replication/health issues (Domain Controllers only) |  |
+| DFS Replication (All) | DFS Replication | _all_ | All DFSR entries - SYSVOL/DFS replication issues (Domain Controllers only) |  |
+| DNS Server (All) | DNS Server | _all_ | All DNS Server role entries (Domain Controllers/DNS role only) |  |
 
 ### App Health
 
 | Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
 |---|---|---|---|---|
-| App Crashes | Application | 1000, 1002 | Application Error and Application Hang (WER) | |
-| App Hangs | Application | 1002, 1001 | Hang detection and Windows Error Reporting follow-up | |
-
-### Resources
-
-| Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
-|---|---|---|---|---|
-| Resource/Memory | System + Application | 2004, 2019, 2020 (System) / 1530 (Application) | Low memory / pool exhaustion / profile warnings | |
-| Disk Errors | System | 7, 11, 153 | Bad block, controller I/O error, disk retry | provider `disk` / `Microsoft-Windows-Disk` |
-
-### Printing
-
-| Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
-|---|---|---|---|---|
-| Print Jobs | Microsoft-Windows-PrintService/Operational | 307 | Document printed — job, user, printer, pages | |
-| Print Errors | Microsoft-Windows-PrintService/Operational | 372, 374, 375 | Spooler errors and failed print jobs | |
-| Spooler Events | System | 7031, 7034 | Print Spooler service crash or restart | message contains "Spooler" |
-
-### Networking
-
-| Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
-|---|---|---|---|---|
-| Network Changes | System | 10000, 10001, 4000, 4001 | NIC connect/disconnect (NDIS) | |
-| DHCP Events | System | 1001, 1002, 1003 | DHCP lease obtained, renewed, or lost | |
-| DNS Errors | System + Application | 1014 (System) / 4015 (Application) | DNS name resolution failure and DNS server errors | |
-| Firewall Changes | Security | 4946, 4947, 4950, 2004 | Firewall rule added, modified, or exception changed | |
-| RDP Connections | Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational | 261, 1149 | RDP session auth and successful connections | |
-| VPN / Dial-up | Application | 20227, 20226 | RAS/VPN connection success or failure | |
-
-### Active Directory
-
-Domain Controller only — these pull the entire log (bounded by Max Events), since replication/DFSR/DNS-server-role event IDs vary too much to hardcode reliably. Use the Keyword box or the live results filter to narrow down. On a non-DC machine these correctly show "0 records found" rather than an error, since the log doesn't exist there.
-
-| Preset | Log(s) | What it shows |
-|---|---|---|
-| AD Replication (All) | Directory Service | All Directory Service log entries — replication/health issues |
-| DFS Replication (All) | DFS Replication | All DFSR entries — SYSVOL/DFS replication issues |
-| DNS Server (All) | DNS Server | All DNS Server role entries |
+| App Crashes | Application | 1000, 1002 | Application Error and Application Hang (WER) |  |
+| App Hangs | Application | 1002, 1001 | Hang detection and Windows Error Reporting follow-up |  |
 
 ### Hardware
 
 | Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
 |---|---|---|---|---|
-| Hardware Errors (WHEA) | System | 1 | Fatal/corrected hardware errors via WHEA | provider `Microsoft-Windows-WHEA-Logger` / `Microsoft-Windows-Kernel-WHEA` |
-| Device Install/Removal | Microsoft-Windows-Kernel-PnP/Configuration | 400, 410, 420, 430 | Device driver install/removal lifecycle — type a device name (e.g. "USB") into the Keyword box to narrow by device type | |
-| Unexpected Shutdown | System | 41 | Kernel-Power: system rebooted without a clean shutdown — often power/hardware related | provider `Microsoft-Windows-Kernel-Power` |
-| BSOD / Bugcheck | System | 1001 | Windows Stop Error (blue screen) — bugcheck code and parameters | provider `Microsoft-Windows-WER-SystemErrorReporting` |
+| Hardware Errors (WHEA) | System | 1 | Fatal/corrected hardware errors via WHEA - ID 1 alone is one of the most-reused IDs in the System log, so this is scoped to the WHEA providers specifically | provider `Microsoft-Windows-WHEA-Logger`, `Microsoft-Windows-Kernel-WHEA` |
+| Device Install/Removal | Microsoft-Windows-Kernel-PnP/Configuration | 400, 410, 420, 430 | Device driver install/removal lifecycle - tip: use Keyword box to filter by device type (e.g. "USB") |  |
+| Unexpected Shutdown | System | 41 | Kernel-Power: system rebooted without a clean shutdown - often power/hardware related | provider `Microsoft-Windows-Kernel-Power` |
+| BSOD / Bugcheck | System | 1001 | Windows Stop Error (blue screen) - bugcheck code and parameters | provider `Microsoft-Windows-WER-SystemErrorReporting` |
 
-## Building the standalone .exe
+### Networking
 
-Requires the [`ps2exe`](https://github.com/MScholtes/PS2EXE) module (installed automatically on first run if missing):
+| Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
+|---|---|---|---|---|
+| Network Changes | System | 10000, 10001, 4000, 4001 | NIC connect/disconnect (NDIS) |  |
+| DHCP Events | System | 1001, 1002, 1003 | DHCP lease obtained, renewed, or lost |  |
+| DNS Errors | System<br>Application | 1014<br>4015 | DNS name resolution failure and DNS server errors |  |
+| Firewall Changes | Security | 4946, 4947, 4950, 2004 | Firewall rule added, modified, or exception changed |  |
+| RDP Connections | Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational | 261, 1149 | RDP session auth and successful connections |  |
+| VPN / Dial-up | Application | 20227, 20226 | RAS/VPN connection success or failure |  |
+
+### Printing
+
+| Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
+|---|---|---|---|---|
+| Print Jobs | Microsoft-Windows-PrintService/Operational | 307 | Document printed - job, user, printer, pages |  |
+| Print Errors | Microsoft-Windows-PrintService/Operational | 372, 374, 375 | Spooler errors and failed print jobs |  |
+| Spooler Events | System | 7031, 7034 | Print Spooler service crash or restart (IDs 7031/7034 are generic Service Control Manager events shared by every service, filtered here to Spooler by message text) | message contains "Spooler" |
+
+### Resources
+
+| Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
+|---|---|---|---|---|
+| Resource/Memory | System<br>Application | 2004, 2019, 2020<br>1530 | Low memory / pool exhaustion / profile warnings |  |
+| Disk Errors | System | 7, 11, 153 | Bad block, device I/O error, disk reset - IDs 7/11/153 are also reused by unrelated providers (e.g. Hyper-V networking, Kernel-Boot), so this is scoped to the disk drivers specifically | provider `disk`, `Microsoft-Windows-Disk` |
+
+### System Changes
+
+| Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
+|---|---|---|---|---|
+| Software Installs | Application | 11707, 1033, 1034 | MsiInstaller product install/remove |  |
+| Service Changes | System | 7045, 7036 | New service installed or state changed |  |
+| Driver Installs | System | 7045 | Kernel/file system driver installed (ID 7045 is shared by every new service; filtered here to entries whose Service Type mentions "driver") | message contains "driver" |
+| Startup/Shutdown | System | 6005, 6006, 1074, 6008 | Boot, clean shutdown, unexpected shutdown, restart reason |  |
+
+<!-- PRESET-REFERENCE:END -->
+
+Active Directory presets pull the entire log (bounded by Max Events), because replication, DFSR
+and DNS-server event IDs vary too much to hardcode. On a machine without those logs they show
+"0 records" and say so, rather than erroring.
+
+## Building
+
+Requires the [.NET SDK](https://dotnet.microsoft.com/download) (8.0 or later). Visual Studio is
+not needed — the projects target .NET Framework 4.8 but build with the SDK alone.
 
 ```powershell
-.\Build-Exe.ps1
+.\build\publish.ps1
 ```
 
-Produces `dist\EventLogViewer.exe`.
+Runs the tests and produces a single self-contained `dist\EventLogViewer.exe`. Dependencies are
+embedded with [Costura](https://github.com/Fody/Costura), so the exe has no loose DLLs beside it.
 
-## Releasing a new version
+```powershell
+dotnet test                             # tests only
+.\build\Generate-PresetDocs.ps1         # regenerate the preset reference above
+```
 
-1. Update `$script:AppVersion` near the top of `EventLogViewer.ps1` to match the version you're about to tag (this is what the in-app update check compares against - if you forget, the new release won't recognize itself as up to date, and everyone still on the old version will correctly see the update prompt, but the newly-released version's own check will be one release behind until the next bump catches it up).
-2. Commit that change.
-3. Push a version tag matching `v*.*.*` — a GitHub Actions workflow builds the exe and attaches it to a new [Release](../../releases) automatically:
+### Layout
+
+| Path | Contents |
+|---|---|
+| `src/EventLogViewer.Core` | Query engine, preset model, CSV export, update check, host detection. No UI dependency. |
+| `src/EventLogViewer.Wpf` | WPF views and view models. |
+| `tests/EventLogViewer.Tests` | Unit tests, plus tests that query this machine's real event log. |
+| `legacy/` | The original PowerShell + WinForms version, kept for one release cycle. |
+
+## Releasing
+
+Push a version tag matching `v*.*.*`. GitHub Actions runs the tests, builds the exe, verifies the
+stamped version matches the tag, and attaches it to a new Release.
 
 ```bash
-git tag v1.2.0
-git push origin v1.2.0
+git tag v1.3.0
+git push origin v1.3.0
 ```
+
+There is no version constant to update — the version comes from the tag and is read back out of
+the assembly at runtime. (The PowerShell version required updating `$script:AppVersion` by hand to
+match the tag, and the release would misreport its own version if you forgot.)
+
+### Code signing
+
+The released exe is **unsigned**. Unsigned executables running as SYSTEM on customer endpoints
+trigger SmartScreen warnings and are blocked outright by some EDR and AppLocker configurations.
+If you deploy this widely, sign it — [Azure Trusted
+Signing](https://learn.microsoft.com/azure/trusted-signing/) is the cheapest current route and
+gives a real publisher name. The release workflow has a place for the signing step; builds
+succeed unsigned if no certificate is configured.
+
+## Updates
+
+A few seconds after launch the app checks GitHub for a newer release and, if there is one, shows a
+link in the status bar. It never downloads or installs anything — updating is deliberately your
+decision.
+
+The check fails silently. Offline machines, outbound-blocked networks and GitHub rate limits are
+all normal in this app's environment and none of them are worth interrupting an investigation. It
+uses the system proxy, since a SYSTEM process has no per-user proxy configuration.

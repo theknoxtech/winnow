@@ -15,19 +15,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Compute version
-        id: version
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # The projects target .NET Framework 4.8 but build with the .NET SDK alone - UseWPF works
+      # for net48, so no Visual Studio or standalone MSBuild install is needed here.
+      - name: Build and test
+        shell: pwsh
+        run: .\build\publish.ps1 -Version "${{ github.ref_name }}"
+
+      - name: Verify the exe is standalone
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}" -replace '^v', ''
-          $parts = @($tag -split '\.')
-          while ($parts.Count -lt 4) { $parts += '0' }
-          $version = ($parts[0..3] -join '.')
-          "version=$version" >> $env:GITHUB_OUTPUT
+          $exe = "dist/EventLogViewer.exe"
+          if (-not (Test-Path $exe)) { throw "Build produced no executable" }
 
-      - name: Build EXE
-        shell: pwsh
-        run: .\Build-Exe.ps1 -Version "${{ steps.version.outputs.version }}"
+          $version = (Get-Item $exe).VersionInfo.ProductVersion
+          $expected = "${{ github.ref_name }}" -replace '^v', ''
+          if (-not $version.StartsWith($expected)) {
+            throw "Version mismatch: exe reports '$version', tag is '$expected'. The in-app update check compares this against the release tag, so a mismatch would make the new release fail to recognise itself as current."
+          }
+          Write-Host "Stamped version: $version"
 
       - name: Create GitHub Release
         shell: pwsh

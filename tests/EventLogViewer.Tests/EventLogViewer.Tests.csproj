@@ -2,6 +2,9 @@
 
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
+    <!-- The view model tests construct WPF collection views, so the test assembly needs the
+         WPF assemblies available. -->
+    <UseWPF>true</UseWPF>
     <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
     <RootNamespace>EventLogViewer.Tests</RootNamespace>
@@ -20,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EventLogViewer.Core\EventLogViewer.Core.csproj" />
+    <ProjectReference Include="..\..\src\EventLogViewer.Wpf\EventLogViewer.Wpf.csproj" />
   </ItemGroup>
 
 </Project>

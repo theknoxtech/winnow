@@ -25,4 +25,17 @@
     <ProjectReference Include="..\EventLogViewer.Core\EventLogViewer.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Embeds the referenced assemblies into the exe, so a single file can be dropped into a
+         Backstage session with nothing alongside it. -->
+    <PackageReference Include="Costura.Fody" Version="5.7.0" PrivateAssets="all" />
+    <PackageReference Include="Fody" Version="6.8.1" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>EventLogViewer.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>
