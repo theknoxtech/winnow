@@ -1,2 +1,11 @@
 dist/
 *.log
+
+# Build output
+bin/
+obj/
+*.user
+.vs/
+
+# Local preset overrides - the side-car is per-deployment, not source
+presets.json
