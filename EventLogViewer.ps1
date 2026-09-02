@@ -12,7 +12,7 @@ $script:isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::A
 $script:currentResults = $null
 
 # Bump this alongside the version in each release tag (see README > Releasing a new version).
-$script:AppVersion = '1.1.0'
+$script:AppVersion = '1.2.0'
 $script:UpdateCheckApiUrl = 'https://api.github.com/repos/theknoxtech/PowerShell-Event-Log-Viewer/releases/latest'
 $script:LatestReleaseUrl  = $null
 #endregion
