@@ -10,7 +10,7 @@ leaving them dangling.
 
 | Filename | Where it appears | What should be visible |
 |---|---|---|
-| `main-window.png` | Top of the README | The whole window after a search that returned rows: filter panel, Quick Filters strip, populated results grid, a selected row with its message in the detail pane, and the status bar showing a record count. |
+| `main-window.png` | Top of the README | The whole window after a search that returned rows: filter panel, Quick Filters strip, populated results grid. **Crop the status bar off**, or at least its right-hand end — it shows the detected host mode as `MACHINE\user`, which you probably do not want on a public repo. |
 | `quick-filters.png` | Start of **Presets** | Just the Quick Filters strip, cropped. The point is the colour-coding by group, so include enough rows to show several different colours. |
 | `preset-editor.png` | **Editing presets in the app** | The editor window overall — preset list on the left with the `built-in` / `custom` labels legible, and a selected preset's fields filled in on the right. |
 | `preset-editor-clauses.png` | Step 2 | The clause area, cropped. Ideally a two-clause preset (`Resource/Memory` or `DNS Errors`) so the multi-log capability is obvious. A clause with providers filled in is better than one without. |
@@ -23,9 +23,10 @@ leaving them dangling.
   need to match a theme.
 - **Crop tightly.** Full-screen shots of a 1150×780 window scale down badly in a README. Everything
   except `main-window.png` should be a crop of the relevant region.
-- **Watch for real data.** The results grid and detail pane will contain real event messages from
-  whatever machine you capture on — usernames, hostnames, IPs, file paths, domain names. Check
-  before committing, especially for anything from the Security log. A lab VM or a fresh install is
-  the safe place to shoot these.
+- **Watch for real data.** Two places leak it. The results grid and detail pane contain real event
+  messages from whatever machine you capture on — usernames, hostnames, IPs, file paths, domain
+  names — and anything from the Security log is worth a careful look. The status bar separately
+  reports the detected host mode as `MACHINE\user`. A lab VM or a fresh install is the safe place
+  to shoot these.
 - **PNG, not JPEG.** UI text goes blurry under JPEG compression.
 - Roughly 1000–1400 px wide is plenty; GitHub scales images down to the content column anyway.
