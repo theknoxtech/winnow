@@ -86,8 +86,19 @@ $before = $content.Substring(0, $startIndex)
 $after  = $content.Substring($endIndex + $endMarker.Length)
 $updated = $before + $generated + $after
 
+# Compare and write with one line ending throughout.
+#
+# Without this the check is not stable: PowerShell's output here is CRLF, an editor writing the
+# surrounding prose may use LF, and the file ends up mixed - so -Check reports "out of date" for a
+# section whose content is byte-identical, failing CI for no real reason. Git already normalises
+# these files to LF on commit (see .gitattributes), so LF is the canonical form to compare in.
+function ConvertTo-Lf([string]$text) {
+    if ($null -eq $text) { return '' }
+    $text -replace "`r`n", "`n"
+}
+
 if ($Check) {
-    if ($content -ne $updated) {
+    if ((ConvertTo-Lf $content) -ne (ConvertTo-Lf $updated)) {
         Write-Error "README.md preset reference is out of date. Run: .\build\Generate-PresetDocs.ps1"
         exit 1
     }
@@ -95,5 +106,7 @@ if ($Check) {
     exit 0
 }
 
-Set-Content -Path $readme -Value $updated -NoNewline -Encoding UTF8
+# Written as LF so the file stays internally consistent regardless of what last edited it.
+$normalised = ConvertTo-Lf $updated
+[System.IO.File]::WriteAllText($readme, $normalised, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "Regenerated the preset reference for $($doc.presets.Count) presets." -ForegroundColor Green

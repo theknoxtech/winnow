@@ -9,6 +9,8 @@ prerequisites. It targets .NET Framework 4.8, which ships in-box on Windows 10 1
 and Server 2019+, and it is designed to work correctly inside a **ScreenConnect Backstage**
 session.
 
+![The main window: filter panel, Quick Filters, results grid and detail pane](docs/images/main-window.png)
+
 ## Running
 
 Download `EventLogViewer.exe` from [Releases](../../releases) and run it. That is the whole
@@ -96,9 +98,65 @@ or Backstage.
 Presets are data, not code. The 36 built-in presets are embedded in the exe; an optional
 `presets.json` beside it (or at `--presets <path>`) adds to, changes, or hides them.
 
-Edit them in the app with **Edit Presets…**, or by hand. The **Test** button runs a preset as
-edited and reports how many events it matches, which is the quickest way to catch a wrong
-Event ID.
+You can edit them two ways: in the app with **Edit Presets…**, or by hand in `presets.json`.
+Both write the same file.
+
+![The Quick Filters strip, with presets colour-coded by group](docs/images/quick-filters.png)
+
+### Editing presets in the app
+
+Click **Edit Presets…** in the toolbar.
+
+![The preset editor, with the preset list on the left and the selected preset's fields on the right](docs/images/preset-editor.png)
+
+The list on the left shows every preset, including ones currently turned off, each labelled
+`built-in` or `custom`. Selecting one opens it on the right.
+
+**1. Edit the fields.** Label and group drive the button; group also picks its colour, and a group
+you invent gets a colour of its own. Description becomes the button's tooltip — worth filling in
+if the preset's Event IDs are shared with unrelated sources, so the next person knows why it is
+scoped the way it is.
+
+**2. Edit the clauses.** Each clause queries one log; results from all of them are merged and
+sorted by time. This is how a preset spans more than one log — `Resource/Memory` and `DNS Errors`
+both do.
+
+![Clause editing, showing log name, Event IDs and providers for one clause](docs/images/preset-editor-clauses.png)
+
+Leave **Event IDs** blank to match every event in the log, which is how the Active Directory
+presets work. Use **Providers** when an Event ID is reused across unrelated sources — see the two
+notes below.
+
+**3. Test it.** The **Test** button runs the preset exactly as edited and reports how many events
+it matches on this machine. It is the fastest way to catch a wrong Event ID, and it will tell you
+if the log does not exist here at all rather than just returning nothing.
+
+![The Test button reporting how many events the edited preset matches](docs/images/preset-editor-test.png)
+
+**4. Save.** Writes `presets.json` beside the exe. If that location is not writable — running from
+a temp copy or a read-only share — you are asked where to put it instead.
+
+Only the differences are written, so the file stays small and reviewable in git, and a later fix
+to a built-in preset still reaches you.
+
+#### Adding your own
+
+**Add** creates a new preset; **Clone** copies the selected one, which is usually the faster start.
+A custom preset appears in the Quick Filters strip alongside the built-ins.
+
+![A custom preset in the editor and the resulting button in the Quick Filters strip](docs/images/preset-custom.png)
+
+#### Turning a built-in off
+
+**Delete** on a built-in turns it off rather than removing it — the definition is kept, so you can
+re-enable it with the **Enabled** box, and a future fix to that preset is not permanently
+discarded. Delete on a custom preset removes it outright.
+
+#### Sharing a preset set across the team
+
+**Export…** writes the current set to a file; **Import…** merges one in. Keep the exported
+`presets.json` in your IT repo and drop it beside the exe when you push the tool to a machine —
+that is the whole mechanism for a shared team preset set, with no server component involved.
 
 ### presets.json format
 

@@ -1,0 +1,8 @@
+# Normalise line endings so generated files and hand-edited files agree.
+# Without this the preset-reference check can report a byte-identical section as out of date,
+# purely because the tool that last wrote it used a different line ending.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.exe binary
