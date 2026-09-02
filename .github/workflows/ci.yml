@@ -1,0 +1,32 @@
+name: CI
+
+# Every push and pull request, so a broken build or a failing test is caught here rather than
+# at release time when a tag has already been pushed.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build
+        run: dotnet build --nologo -c Release
+
+      # Includes tests that query this runner's real event log, which is what verifies that every
+      # built-in preset produces XPath Windows actually accepts.
+      - name: Test
+        run: dotnet test --nologo -c Release -v normal --no-build
+
+      # The preset reference in the README is generated. Failing here rather than letting it drift
+      # is the point - the hand-maintained version in the PowerShell app did drift.
+      - name: Check the preset reference is current
+        shell: pwsh
+        run: .\build\Generate-PresetDocs.ps1 -Check

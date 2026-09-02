@@ -15,26 +15,88 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Compute version
-        id: version
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # The projects target .NET Framework 4.8 but build with the .NET SDK alone - UseWPF works
+      # for net48, so no Visual Studio or standalone MSBuild install is needed here.
+      - name: Build and test
+        shell: pwsh
+        run: .\build\publish.ps1 -Version "${{ github.ref_name }}"
+
+      - name: Verify the exe is standalone
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}" -replace '^v', ''
-          $parts = @($tag -split '\.')
-          while ($parts.Count -lt 4) { $parts += '0' }
-          $version = ($parts[0..3] -join '.')
-          "version=$version" >> $env:GITHUB_OUTPUT
+          $exe = "dist/Winnow.exe"
+          if (-not (Test-Path $exe)) { throw "Build produced no executable" }
 
-      - name: Build EXE
+          $version = (Get-Item $exe).VersionInfo.ProductVersion
+          $expected = "${{ github.ref_name }}" -replace '^v', ''
+          if (-not $version.StartsWith($expected)) {
+            throw "Version mismatch: exe reports '$version', tag is '$expected'. The in-app update check compares this against the release tag, so a mismatch would make the new release fail to recognise itself as current."
+          }
+          Write-Host "Stamped version: $version"
+
+      # The release is unsigned by design, so the SHA-256 is what stands in for a publisher
+      # signature: it lets anyone verify the download, and gives a customer's security team a
+      # value to write an AppLocker or WDAC hash rule against.
+      - name: Compute SHA-256
+        id: hash
         shell: pwsh
-        run: .\Build-Exe.ps1 -Version "${{ steps.version.outputs.version }}"
+        run: |
+          $hash = (Get-FileHash "dist/Winnow.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash *Winnow.exe" | Set-Content "dist/Winnow.exe.sha256" -NoNewline -Encoding ascii
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          Write-Host "SHA-256: $hash"
 
       - name: Create GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA256: ${{ steps.hash.outputs.sha256 }}
         run: |
           gh release create "${{ github.ref_name }}" `
-            "dist/EventLogViewer.exe" `
+            "dist/Winnow.exe" `
+            "dist/Winnow.exe.sha256" `
             --title "${{ github.ref_name }}" `
             --generate-notes
+
+          # Appended after creation rather than passed as --notes: --notes and --generate-notes
+          # do not compose, and supplying both loses the generated changelog.
+          $notes = (gh release view "${{ github.ref_name }}" --json body -q .body | Out-String).TrimEnd()
+
+          # Built line by line rather than as a here-string. A markdown code fence is three
+          # backticks, and the backtick is PowerShell's escape character - embedding fences in a
+          # double-quoted here-string means escaping every one of them, which is unreadable and
+          # easy to get subtly wrong.
+          $fence = [string][char]0x60 * 3
+          $sha = $env:SHA256
+
+          $verify = @(
+            # Two blank lines, not one: '---' directly beneath a line of text is a setext
+            # heading in markdown, which would silently reformat the last changelog entry
+            # instead of drawing a rule.
+            ''
+            ''
+            '---'
+            ''
+            '### Verifying this download'
+            ''
+            'Winnow.exe is unsigned, so this hash is what stands in for a publisher signature.'
+            'Check it before running the file on a customer machine:'
+            ''
+            ($fence + 'powershell')
+            ("(Get-FileHash Winnow.exe -Algorithm SHA256).Hash -eq '" + $sha + "'")
+            $fence
+            ''
+            'SHA-256:'
+            ''
+            $fence
+            $sha
+            $fence
+          ) -join "`n"
+
+          ($notes + $verify) | Set-Content release-notes.md -Encoding utf8
+          gh release edit "${{ github.ref_name }}" --notes-file release-notes.md

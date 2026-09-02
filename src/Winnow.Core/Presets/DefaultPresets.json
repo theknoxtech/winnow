@@ -1,0 +1,265 @@
+{
+  "$comment": "Built-in presets, embedded in the exe. A side-car presets.json merges over this by id: matching id replaces, unknown id adds, \"disabled\": true hides. Ported from EventLogViewer.ps1 (the original PowerShell app); descriptions carry the event-ID collision notes from that script verbatim - they are hard-won and easy to lose.",
+  "presets": [
+    {
+      "id": "system.software-installs",
+      "group": "System Changes",
+      "label": "Software Installs",
+      "description": "MsiInstaller product install/remove",
+      "clauses": [ { "logName": "Application", "eventIds": [11707, 1033, 1034] } ]
+    },
+    {
+      "id": "system.service-changes",
+      "group": "System Changes",
+      "label": "Service Changes",
+      "description": "New service installed or state changed",
+      "clauses": [ { "logName": "System", "eventIds": [7045, 7036] } ]
+    },
+    {
+      "id": "system.driver-installs",
+      "group": "System Changes",
+      "label": "Driver Installs",
+      "description": "Kernel/file system driver installed (ID 7045 is shared by every new service; filtered here to entries whose Service Type mentions \"driver\")",
+      "messageFilter": "driver",
+      "clauses": [ { "logName": "System", "eventIds": [7045] } ]
+    },
+    {
+      "id": "system.startup-shutdown",
+      "group": "System Changes",
+      "label": "Startup/Shutdown",
+      "description": "Boot, clean shutdown, unexpected shutdown, restart reason",
+      "clauses": [ { "logName": "System", "eventIds": [6005, 6006, 1074, 6008] } ]
+    },
+    {
+      "id": "account.user-acct-changes",
+      "group": "Account/Policy",
+      "label": "User Acct Changes",
+      "description": "Account created, enabled, disabled, deleted, modified",
+      "clauses": [ { "logName": "Security", "eventIds": [4720, 4722, 4725, 4726, 4738] } ]
+    },
+    {
+      "id": "account.policy-changes",
+      "group": "Account/Policy",
+      "label": "Policy Changes",
+      "description": "System and domain audit policy changed",
+      "clauses": [ { "logName": "Security", "eventIds": [4719, 4739] } ]
+    },
+    {
+      "id": "account.logon-events",
+      "group": "Account/Policy",
+      "label": "Logon Events",
+      "description": "Successful/failed logon and logoff",
+      "clauses": [ { "logName": "Security", "eventIds": [4624, 4625, 4634, 4647] } ]
+    },
+    {
+      "id": "account.lockouts",
+      "group": "Account/Policy",
+      "label": "Account Lockouts",
+      "description": "User account locked out after failed logon attempts",
+      "clauses": [ { "logName": "Security", "eventIds": [4740] } ]
+    },
+    {
+      "id": "account.group-membership",
+      "group": "Account/Policy",
+      "label": "Group Membership Chg",
+      "description": "Members added/removed: global, local, universal security groups",
+      "clauses": [ { "logName": "Security", "eventIds": [4728, 4729, 4732, 4733, 4756, 4757] } ]
+    },
+    {
+      "id": "account.kerberos-auth",
+      "group": "Account/Policy",
+      "label": "Kerberos Auth",
+      "description": "TGT/service-ticket requests, pre-auth failures, credential validation",
+      "clauses": [ { "logName": "Security", "eventIds": [4768, 4769, 4771, 4776] } ]
+    },
+    {
+      "id": "account.explicit-credential",
+      "group": "Account/Policy",
+      "label": "Explicit Credential",
+      "description": "Logon using explicit credentials (RunAs) - possible lateral movement",
+      "clauses": [ { "logName": "Security", "eventIds": [4648] } ]
+    },
+    {
+      "id": "account.special-privileges",
+      "group": "Account/Policy",
+      "label": "Special Privileges",
+      "description": "Admin-equivalent logon - sensitive privileges assigned",
+      "clauses": [ { "logName": "Security", "eventIds": [4672] } ]
+    },
+    {
+      "id": "account.scheduled-task-chg",
+      "group": "Account/Policy",
+      "label": "Scheduled Task Chg",
+      "description": "Scheduled task created, deleted, enabled, disabled, or updated",
+      "clauses": [ { "logName": "Security", "eventIds": [4698, 4699, 4700, 4701, 4702] } ]
+    },
+    {
+      "id": "account.audit-log-cleared",
+      "group": "Account/Policy",
+      "label": "Audit Log Cleared",
+      "description": "Security audit log was cleared - investigate immediately",
+      "clauses": [ { "logName": "Security", "eventIds": [1102] } ]
+    },
+    {
+      "id": "account.ps-script-block",
+      "group": "Account/Policy",
+      "label": "PS Script Block Log",
+      "description": "Logged PowerShell script block text (requires Script Block Logging GPO)",
+      "clauses": [ { "logName": "Microsoft-Windows-PowerShell/Operational", "eventIds": [4104] } ]
+    },
+    {
+      "id": "account.defender-detections",
+      "group": "Account/Policy",
+      "label": "Defender Detections",
+      "description": "Malware detected / remediation action taken",
+      "clauses": [ { "logName": "Microsoft-Windows-Windows Defender/Operational", "eventIds": [1116, 1117] } ]
+    },
+    {
+      "id": "apphealth.app-crashes",
+      "group": "App Health",
+      "label": "App Crashes",
+      "description": "Application Error and Application Hang (WER)",
+      "clauses": [ { "logName": "Application", "eventIds": [1000, 1002] } ]
+    },
+    {
+      "id": "apphealth.app-hangs",
+      "group": "App Health",
+      "label": "App Hangs",
+      "description": "Hang detection and Windows Error Reporting follow-up",
+      "clauses": [ { "logName": "Application", "eventIds": [1002, 1001] } ]
+    },
+    {
+      "id": "resources.memory",
+      "group": "Resources",
+      "label": "Resource/Memory",
+      "description": "Low memory / pool exhaustion / profile warnings",
+      "clauses": [
+        { "logName": "System", "eventIds": [2004, 2019, 2020] },
+        { "logName": "Application", "eventIds": [1530] }
+      ]
+    },
+    {
+      "id": "resources.disk-errors",
+      "group": "Resources",
+      "label": "Disk Errors",
+      "description": "Bad block, device I/O error, disk reset - IDs 7/11/153 are also reused by unrelated providers (e.g. Hyper-V networking, Kernel-Boot), so this is scoped to the disk drivers specifically",
+      "clauses": [ { "logName": "System", "eventIds": [7, 11, 153], "providerNames": ["disk", "Microsoft-Windows-Disk"] } ]
+    },
+    {
+      "id": "printing.print-jobs",
+      "group": "Printing",
+      "label": "Print Jobs",
+      "description": "Document printed - job, user, printer, pages",
+      "clauses": [ { "logName": "Microsoft-Windows-PrintService/Operational", "eventIds": [307] } ]
+    },
+    {
+      "id": "printing.print-errors",
+      "group": "Printing",
+      "label": "Print Errors",
+      "description": "Spooler errors and failed print jobs",
+      "clauses": [ { "logName": "Microsoft-Windows-PrintService/Operational", "eventIds": [372, 374, 375] } ]
+    },
+    {
+      "id": "printing.spooler-events",
+      "group": "Printing",
+      "label": "Spooler Events",
+      "description": "Print Spooler service crash or restart (IDs 7031/7034 are generic Service Control Manager events shared by every service, filtered here to Spooler by message text)",
+      "messageFilter": "Spooler",
+      "clauses": [ { "logName": "System", "eventIds": [7031, 7034] } ]
+    },
+    {
+      "id": "networking.network-changes",
+      "group": "Networking",
+      "label": "Network Changes",
+      "description": "NIC connect/disconnect (NDIS)",
+      "clauses": [ { "logName": "System", "eventIds": [10000, 10001, 4000, 4001] } ]
+    },
+    {
+      "id": "networking.dhcp-events",
+      "group": "Networking",
+      "label": "DHCP Events",
+      "description": "DHCP lease obtained, renewed, or lost",
+      "clauses": [ { "logName": "System", "eventIds": [1001, 1002, 1003] } ]
+    },
+    {
+      "id": "networking.dns-errors",
+      "group": "Networking",
+      "label": "DNS Errors",
+      "description": "DNS name resolution failure and DNS server errors",
+      "clauses": [
+        { "logName": "System", "eventIds": [1014] },
+        { "logName": "Application", "eventIds": [4015] }
+      ]
+    },
+    {
+      "id": "networking.firewall-changes",
+      "group": "Networking",
+      "label": "Firewall Changes",
+      "description": "Firewall rule added, modified, or exception changed",
+      "clauses": [ { "logName": "Security", "eventIds": [4946, 4947, 4950, 2004] } ]
+    },
+    {
+      "id": "networking.rdp-connections",
+      "group": "Networking",
+      "label": "RDP Connections",
+      "description": "RDP session auth and successful connections",
+      "clauses": [ { "logName": "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational", "eventIds": [261, 1149] } ]
+    },
+    {
+      "id": "networking.vpn-dialup",
+      "group": "Networking",
+      "label": "VPN / Dial-up",
+      "description": "RAS/VPN connection success or failure",
+      "clauses": [ { "logName": "Application", "eventIds": [20227, 20226] } ]
+    },
+    {
+      "id": "ad.replication",
+      "group": "Active Directory",
+      "label": "AD Replication (All)",
+      "description": "All Directory Service log entries - replication/health issues (Domain Controllers only)",
+      "clauses": [ { "logName": "Directory Service" } ]
+    },
+    {
+      "id": "ad.dfs-replication",
+      "group": "Active Directory",
+      "label": "DFS Replication (All)",
+      "description": "All DFSR entries - SYSVOL/DFS replication issues (Domain Controllers only)",
+      "clauses": [ { "logName": "DFS Replication" } ]
+    },
+    {
+      "id": "ad.dns-server",
+      "group": "Active Directory",
+      "label": "DNS Server (All)",
+      "description": "All DNS Server role entries (Domain Controllers/DNS role only)",
+      "clauses": [ { "logName": "DNS Server" } ]
+    },
+    {
+      "id": "hardware.whea",
+      "group": "Hardware",
+      "label": "Hardware Errors (WHEA)",
+      "description": "Fatal/corrected hardware errors via WHEA - ID 1 alone is one of the most-reused IDs in the System log, so this is scoped to the WHEA providers specifically",
+      "clauses": [ { "logName": "System", "eventIds": [1], "providerNames": ["Microsoft-Windows-WHEA-Logger", "Microsoft-Windows-Kernel-WHEA"] } ]
+    },
+    {
+      "id": "hardware.device-install-removal",
+      "group": "Hardware",
+      "label": "Device Install/Removal",
+      "description": "Device driver install/removal lifecycle - tip: use Keyword box to filter by device type (e.g. \"USB\")",
+      "clauses": [ { "logName": "Microsoft-Windows-Kernel-PnP/Configuration", "eventIds": [400, 410, 420, 430] } ]
+    },
+    {
+      "id": "hardware.unexpected-shutdown",
+      "group": "Hardware",
+      "label": "Unexpected Shutdown",
+      "description": "Kernel-Power: system rebooted without a clean shutdown - often power/hardware related",
+      "clauses": [ { "logName": "System", "eventIds": [41], "providerNames": ["Microsoft-Windows-Kernel-Power"] } ]
+    },
+    {
+      "id": "hardware.bsod-bugcheck",
+      "group": "Hardware",
+      "label": "BSOD / Bugcheck",
+      "description": "Windows Stop Error (blue screen) - bugcheck code and parameters",
+      "clauses": [ { "logName": "System", "eventIds": [1001], "providerNames": ["Microsoft-Windows-WER-SystemErrorReporting"] } ]
+    }
+  ]
+}

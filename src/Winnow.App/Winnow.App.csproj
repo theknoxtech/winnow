@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Winnow.App</RootNamespace>
+    <AssemblyName>Winnow</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Regenerate with build\Generate-Icon.ps1. WPF windows inherit the executable's icon when
+         Window.Icon is not set, so this covers the taskbar, title bar and Explorer alike without
+         also embedding the image as a resource. -->
+    <ApplicationIcon>winnow.ico</ApplicationIcon>
+
+    <Product>Winnow</Product>
+    <AssemblyTitle>Winnow - Windows Event Log triage</AssemblyTitle>
+    <Description>Windows Event Log triage for remote support. Single file, no install.</Description>
+
+    <!-- Version is stamped by the release build from the git tag. The update check reads it back
+         out of the assembly, so the tag stays the single source of truth. -->
+    <Version>1.2.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Winnow.Core\Winnow.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Embeds the referenced assemblies into the exe, so a single file can be dropped into a
+         Backstage session with nothing alongside it. -->
+    <PackageReference Include="Costura.Fody" Version="5.7.0" PrivateAssets="all" />
+    <PackageReference Include="Fody" Version="6.8.1" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Winnow.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Winnow.Core/Winnow.Core.csproj" />
+    <Project Path="src/Winnow.App/Winnow.App.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Winnow.Tests/Winnow.Tests.csproj" />
+  </Folder>
+</Solution>
