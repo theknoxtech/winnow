@@ -25,7 +25,9 @@ install — copy the single file wherever you need it.
 Right-click → *Run as Administrator* if you need the Security log (or any preset that reads it).
 
 The binary is unsigned, so each release publishes its SHA-256 — worth
-[checking](#verifying-a-download) before you put it on a customer machine.
+[checking](#verifying-a-download) before you put it on a customer machine. Downloading it
+through a browser can also trip Windows Defender's cloud classifier — see
+[If Windows Defender flags Winnow.exe](#if-windows-defender-flags-winnowexe) if that happens.
 
 ### In ScreenConnect Backstage
 
@@ -361,28 +363,65 @@ subscription or a hardware token plus a self-hosted build runner.
 
 What that does and does not cost you:
 
-- **SmartScreen is largely moot** for how this tool is distributed. The "Windows protected your
-  PC" prompt is driven by Mark-of-the-Web, which browsers and mail clients attach to downloads. A
-  file pushed over a ScreenConnect file transfer, or copied from a UNC path, usually carries no
-  MOTW and never triggers it. Downloading the exe from Releases in a browser *will* trigger it.
-- **AV heuristics still bite, and how the exe is packaged matters more than you would expect.**
-  v1.3.0 was flagged by Defender as `Trojan:Win32/Wacatac.B!ml` — a machine-learning verdict, not a
-  signature match. The cause was the packaging, not the code: it used
-  [Costura](https://github.com/Fody/Costura), which embeds each dependency as a compressed
-  resource and hooks `AssemblyResolve` to decompress and load it from memory at run time. That is
-  behaviourally what a packer does, and an unsigned binary with no reputation doing it scores
-  badly. Verified by scanning the same code built both ways: with Costura, flagged; without it,
-  clean. The build now uses ILRepack, which merges the IL at build time into one ordinary
-  assembly — same single file, no run-time loading, no detection. `build\publish.ps1` fails the
-  build if that pattern ever comes back.
-- **Application control is the real loss.** A customer's security team cannot write an AppLocker
-  or WDAC *publisher* rule against an unsigned file. They need a hash rule, which is why every
-  release publishes its SHA-256 (below).
+- **SmartScreen is largely moot** for how this tool is meant to be distributed. The "Windows
+  protected your PC" prompt is driven by Mark-of-the-Web, which browsers and mail clients attach
+  to downloads. A file pushed over a ScreenConnect file transfer, or copied from a UNC path,
+  usually carries no MOTW and never triggers it. **Downloading the exe from Releases in a browser
+  is a different story** — see below.
+- **Application control is the real, unconditional loss.** A customer's security team cannot
+  write an AppLocker or WDAC *publisher* rule against an unsigned file. They need a hash rule,
+  which is why every release publishes its SHA-256 (below).
+- **Defender's cloud ML classifier flags unsigned, low-prevalence binaries — repeatedly, and this
+  is not solved.** v1.3.0 was quarantined as `Trojan:Win32/Wacatac.B!ml`. The cause looked
+  packaging-specific: it used [Costura](https://github.com/Fody/Costura), which embeds each
+  dependency as a compressed resource and loads it from memory at run time via `AssemblyResolve` —
+  behaviourally what a packer does. Switching to [ILRepack](https://github.com/gluck/il-repack),
+  which merges the IL at build time into one ordinary assembly with no compressed payloads and no
+  run-time loading, tested clean on the build machine. **v1.3.1 — the ILRepack build — was then
+  independently quarantined on a different machine as `Trojan:Win32/Wacatac.C!ml`**, confirmed by
+  cross-referencing the flagged file's CDN blob GUID against the actual release asset, not a stale
+  v1.3.0 link.
+
+  The honest reading: removing the Costura pattern was a real improvement and worth keeping — it
+  is less packer-like by any static measure, and every download it caught during testing here
+  came back clean — but it was not sufficient on its own. `Wacatac.*!ml` is a cloud model verdict
+  reacting to the whole profile of the file: unsigned, freshly built, near-zero prevalence, and
+  performing operations (`EventLogReader` against the Security log, outbound HTTPS for the update
+  check) that a heuristic has no way to distinguish from reconnaissance or exfiltration short of
+  vouching for the publisher. Signing is what supplies that vouching; nothing about how the
+  assemblies are merged substitutes for it. **This should be expected to recur on future unsigned
+  releases**, and a "scanned clean here" claim from any one machine does not predict the verdict
+  on another — the same v1.3.1 hash was clean on the machine that built it and flagged on the one
+  that downloaded it, which is the cloud model's non-determinism showing directly, not a fluke.
 
 If you fork this and do have a certificate, the signing step goes after `publish.ps1` and before
 `gh release create`, operating on `dist\Winnow.exe` — the final ILRepack-merged file, not the
 intermediate assemblies. Timestamp it (`/tr` plus `/td sha256`), or every signature you produce
 becomes invalid the day the certificate expires.
+
+### If Windows Defender flags Winnow.exe
+
+You may see `Trojan:Win32/Wacatac.B!ml` or `Trojan:Win32/Wacatac.C!ml`, marked Severe, quarantined
+automatically. The `!ml` means this is a cloud machine-learning verdict, not a signature match
+against known malware — it is reacting to the file being unsigned and unfamiliar, not to anything
+specific the code does. See [above](#code-signing-and-why-there-isnt-any) for why, and why it is
+not currently fixable without a paid certificate.
+
+What to do about it:
+
+1. **Verify the file first, always.** Check its SHA-256 against the value published with the
+   [release](../../releases) — see [Verifying a download](#verifying-a-download) — before assuming
+   it's a false positive rather than a compromised build.
+2. **Prefer pushing the file over ScreenConnect, not a browser download from Releases**, where
+   possible. Both incidents so far were logged with `Detection Source: Downloads and attachments`
+   — the path this tool's primary Backstage use case does not go through.
+3. **If it's already been quarantined**, Windows Security → Protection history → find the entry →
+   Actions → *Restore* brings the file back once you've confirmed the hash.
+4. **Consider submitting the flagged release to Microsoft** at
+   [www.microsoft.com/wdsi/filesubmission](https://www.microsoft.com/en-us/wdsi/filesubmission) —
+   submitter type *Software developer*, "I believe this file should not be detected as malware",
+   detection name as shown. This is worth doing for whichever release is *currently* live; it does
+   nothing for a superseded one.
 
 ### Verifying a download
 

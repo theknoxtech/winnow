@@ -74,6 +74,30 @@ jobs:
           $fence = [string][char]0x60 * 3
           $sha = $env:SHA256
 
+          # Every release carries this, not just the one that got flagged: v1.3.0 (Costura) was
+          # quarantined as Wacatac.B!ml, and v1.3.1 (ILRepack, after that was fixed) was
+          # independently quarantined on a different machine as Wacatac.C!ml. This is a cloud ML
+          # classifier reacting to "unsigned, low-prevalence binary", not a defect in a specific
+          # build - so it should be expected on any future unsigned release too, and the warning
+          # needs to ship with the release itself, not live only in a README someone has to think
+          # to check.
+          $defenderWarning = @(
+            ''
+            ''
+            '---'
+            ''
+            '### Windows Defender may flag this file'
+            ''
+            '`Trojan:Win32/Wacatac.B!ml` or `Trojan:Win32/Wacatac.C!ml`, marked Severe, auto-quarantined. This'
+            'is a cloud ML classifier reacting to an unsigned, low-prevalence binary - not a signature match,'
+            'and not indicating anything specific the code does.'
+            ''
+            'Verify the file against the SHA-256 below before assuming this is a false positive rather than'
+            'a compromised build. See'
+            '[README - If Windows Defender flags Winnow.exe](https://github.com/theknoxtech/winnow#if-windows-defender-flags-winnowexe)'
+            'for what to do about it.'
+          ) -join "`n"
+
           $verify = @(
             # Two blank lines, not one: '---' directly beneath a line of text is a setext
             # heading in markdown, which would silently reformat the last changelog entry
@@ -98,5 +122,5 @@ jobs:
             $fence
           ) -join "`n"
 
-          ($notes + $verify) | Set-Content release-notes.md -Encoding utf8
+          ($notes + $defenderWarning + $verify) | Set-Content release-notes.md -Encoding utf8
           gh release edit "${{ github.ref_name }}" --notes-file release-notes.md
