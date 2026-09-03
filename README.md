@@ -19,8 +19,24 @@ and it is designed to work correctly inside a **ScreenConnect Backstage** sessio
 
 ## Running
 
-Download `Winnow.exe` from [Releases](../../releases) and run it. That is the whole
-install — copy the single file wherever you need it.
+Two ways to get `Winnow.exe`, no installer either way — copy the single file wherever you need it.
+
+**Download it:**
+
+```powershell
+Invoke-WebRequest https://github.com/theknoxtech/winnow/releases/latest/download/Winnow.exe -OutFile Winnow.exe
+```
+
+A plain browser download from [Releases](../../releases) works too, but a CLI download like this
+one does not attach a Mark-of-the-Web tag the way a browser's download manager does — and MOTW is
+part of what triggers the SmartScreen/Defender warning covered
+[below](#if-windows-defender-flags-winnowexe). Verified on the machines used to build this
+project; not a guarantee it holds on every configuration, but it's the lower-friction path if
+you'd rather not hit that prompt at all.
+
+**Or build it yourself** — [`.\build\publish.ps1`](#building) needs only the .NET SDK, no Visual
+Studio, and takes about a minute. The published source is exactly what the exe is built from;
+there's nothing to take on faith.
 
 Right-click → *Run as Administrator* if you need the Security log (or any preset that reads it).
 
