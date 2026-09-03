@@ -413,6 +413,22 @@ signs the exe, verifies the result is a `Valid` Authenticode signature before pu
 (failing the build otherwise, rather than shipping something quietly broken), and the release notes
 carry a short signed-release note in place of the Defender warning above.
 
+**This path requires personal identity verification for an individual** (government ID, a live
+check) and is not currently being pursued for that reason — the wiring above stays in place,
+dormant and harmless, in case that changes later.
+
+**The path actually being pursued is [SignPath Foundation](https://signpath.org/)'s free signing
+for open-source projects** — no personal ID; the verification is of the project and its source,
+not the maintainer. Winnow meets its stated eligibility criteria (OSI license, already released,
+actively maintained, public repository). [`SIGNING-POLICY.md`](SIGNING-POLICY.md) is the policy
+page their program requires — team roles, build provenance, and a privacy statement grounded in an
+actual audit of the codebase's one network call. **The application has not been submitted yet** —
+that page exists ahead of it, since a ready policy page is itself part of showing the project is
+prepared. CI integration for SignPath doesn't exist yet either; that's deliberately deferred until
+after acceptance, to be built against their actual current submission mechanism rather than
+guessed at now, the same way the Azure integration above was verified against Microsoft's current
+docs rather than assumed.
+
 ### If Windows Defender flags Winnow.exe
 
 You may see `Trojan:Win32/Wacatac.B!ml` or `Trojan:Win32/Wacatac.C!ml`, marked Severe, quarantined
