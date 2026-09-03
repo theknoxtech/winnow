@@ -29,6 +29,11 @@ The binary is unsigned, so each release publishes its SHA-256 — worth
 through a browser can also trip Windows Defender's cloud classifier — see
 [If Windows Defender flags Winnow.exe](#if-windows-defender-flags-winnowexe) if that happens.
 
+This project uses **[SignPath Foundation](https://signpath.org/)** for free code signing of open
+source projects. An application is in progress — releases are not signed yet, so the note above
+still applies until that changes. See [`SIGNING-POLICY.md`](SIGNING-POLICY.md) for the full policy
+this signing will operate under, including the privacy statement.
+
 ### In ScreenConnect Backstage
 
 Copy the exe to the machine and run it from the Backstage command prompt:
