@@ -394,10 +394,24 @@ What that does and does not cost you:
   on another — the same v1.3.1 hash was clean on the machine that built it and flagged on the one
   that downloaded it, which is the cloud model's non-determinism showing directly, not a fluke.
 
-If you fork this and do have a certificate, the signing step goes after `publish.ps1` and before
-`gh release create`, operating on `dist\Winnow.exe` — the final ILRepack-merged file, not the
-intermediate assemblies. Timestamp it (`/tr` plus `/td sha256`), or every signature you produce
-becomes invalid the day the certificate expires.
+**Signing is wired into the release workflow but not active.** `.github/workflows/release.yml` will
+Authenticode-sign `dist\Winnow.exe` via [Azure Artifact
+Signing](https://azure.microsoft.com/en-us/products/artifact-signing) (formerly Trusted Signing)
+the moment the repository has the following configured — nothing else about the workflow needs to
+change:
+
+- **Secrets:** `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` — from an Entra ID app
+  registration with a GitHub Actions federated credential (OIDC, no stored password).
+- **Variables:** `ARTIFACT_SIGNING_ENDPOINT`, `ARTIFACT_SIGNING_ACCOUNT`, `ARTIFACT_SIGNING_PROFILE`
+  — matching an Azure Artifact Signing account with a completed identity validation and a Public
+  Trust certificate profile, with that app registration granted the **Artifact Signing Certificate
+  Profile Signer** role on it.
+
+Until all of those exist, every release ships exactly as described above — the workflow checks for
+`ARTIFACT_SIGNING_ACCOUNT` and skips signing entirely if it's unset. Once they do, the workflow
+signs the exe, verifies the result is a `Valid` Authenticode signature before publishing anything
+(failing the build otherwise, rather than shipping something quietly broken), and the release notes
+carry a short signed-release note in place of the Defender warning above.
 
 ### If Windows Defender flags Winnow.exe
 
