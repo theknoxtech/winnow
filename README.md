@@ -373,7 +373,7 @@ uses the system proxy, since a SYSTEM process has no per-user proxy configuratio
 Building the exe locally:
 
 ```powershell
-.\build\Build-Exe.ps1 -Version 2.1.0
+.\build\Build-Exe.ps1 -Version 2.1.1
 ```
 
 ### Releasing
@@ -382,8 +382,8 @@ Push a version tag matching `v*.*.*`. GitHub Actions parses the script, checks i
 the tag, builds the exe, and publishes both files with their SHA-256s and generated release notes.
 
 ```bash
-git tag v2.1.0
-git push origin v2.1.0
+git tag v2.1.1
+git push origin v2.1.1
 ```
 
 `$script:AppVersion` near the top of `Winnow.ps1` must match the tag — the release fails if it does

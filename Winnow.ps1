@@ -7,7 +7,7 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 # Bump alongside the version in each release tag (see README > Releasing a new version).
-$script:AppVersion        = '2.1.0'
+$script:AppVersion        = '2.1.1'
 $script:UpdateCheckApiUrl = 'https://api.github.com/repos/theknoxtech/winnow/releases/latest'
 $script:LatestReleaseUrl  = $null
 $script:currentResults    = $null
