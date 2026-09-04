@@ -23,12 +23,66 @@ Download **`Winnow.exe`** from [Releases](../../releases) and run it. That is th
 copy the single file wherever you need it. Right-click → *Run as Administrator* if you need the
 Security log, or any preset that reads it.
 
-Every release also ships **`Winnow.ps1`** — the same application as a plain script. It is there as
-a fallback, for the reason below.
+Every release also ships **`Winnow.ps1`** — the same application as a plain script, and the one to
+reach for on a customer machine. See [Which one to use](#which-one-to-use) for why.
 
-### Two files, and which one to use
+### Running it straight from the URL
 
-`Winnow.exe` is the one to reach for. `Winnow.ps1` matters when it gets blocked.
+```powershell
+irm siliconscripted.com/winnow | iex
+```
+
+Nothing is written to disk, nothing is installed, and you always get the current release. Handy
+for a quick look at your own machine.
+
+That short URL is a 302 to the release asset, so it needs no maintenance across releases. The
+asset itself is equally usable if you would rather not depend on the redirect:
+
+```powershell
+irm https://github.com/theknoxtech/winnow/releases/latest/download/Winnow.ps1 | iex
+```
+
+**Think before pasting this on a customer endpoint.** `irm <url> | iex` is the defining shape of
+the *ClickFix* social-engineering attack — persuading someone to paste a command that downloads
+and runs code — and endpoint security products watch for it specifically. Defender ships a whole
+`Trojan:Win32/ClickFix.*` signature family for it. Winnow's own one-liner is not currently flagged,
+but the pattern is monitored, and a false positive here is worse than a blocked download: it
+raises an alert that looks like an attack in progress, with your technician's session attached to
+it. On someone else's estate, prefer the script.
+
+### What the one-liner does
+
+`irm` fetches the script; `iex` runs it in the session you are sitting in. Worth knowing:
+
+- **It runs in your current session.** The console stays occupied until you close the window, and
+  the script's variables are left behind in that session. Open a fresh PowerShell if that matters.
+- **Execution policy and Mark-of-the-Web do not apply**, because nothing is written to disk.
+  That is the point of it, and also the thing to be deliberate about: piping any remote script
+  straight into `iex` runs whatever that URL serves at that moment, with no signature and no hash
+  to check first. Here the URL is this repository's latest release asset over HTTPS. If you would
+  rather inspect it, `irm <url> > Winnow.ps1` and read it before running.
+- **Presets are stored in `%LOCALAPPDATA%\Winnow\presets.json`** when Winnow runs this way, since
+  there is no file for them to sit beside. The preset editor shows the exact path it is using.
+- **A single-threaded apartment is required** by WinForms. Every current host gives one by default
+  (`powershell.exe` always, `pwsh` since 7.3). On an older `pwsh`, or with an explicit `-mta`, the
+  script notices and restarts itself in one.
+
+### How the short URL works
+
+`siliconscripted.com/winnow` is a Cloudflare Redirect Rule issuing a **302** to
+`https://github.com/theknoxtech/winnow/releases/latest/download/Winnow.ps1`. GitHub then answers
+*that* with its own 302 to the current tag. `irm` follows the chain, so a release re-points the
+short URL on its own and the rule never needs touching.
+
+Two details worth keeping if the rule is ever rebuilt: match on `lower(http.request.uri.path)` so
+`/Winnow` works too, and keep the target on `releases/latest/download/` rather than a tag.
+
+The script's own restart path deliberately uses the GitHub URL rather than this one, so that
+recovering from a wrong thread apartment does not depend on the redirect being up.
+
+### Which one to use
+
+Three ways to run it, and the reason there are three.
 
 Both are unsigned, and Defender has quarantined unsigned builds from this project before — v1.3.0
 as `Trojan:Win32/Wacatac.B!ml` and v1.3.1 as `Trojan:Win32/Wacatac.C!ml`. Those are cloud
@@ -37,7 +91,19 @@ newly built and rare, largely regardless of what the code does. Signing is the r
 available to this project (see [Code signing](#code-signing)).
 
 That classifier applies to **PE binaries**. A `.ps1` is a text script, so it cannot apply to one at
-all. If the exe is ever blocked on a machine, the script runs the same application:
+all — which is why the fallbacks are what they are:
+
+| How you run it | What can block it | Where it fits |
+|---|---|---|
+| **`Winnow.ps1`** | Mark-of-the-Web under `RemoteSigned`, cleared by `-ExecutionPolicy Bypass` or `Unblock-File`. Fetching it with `irm -OutFile` or `gh release download` attaches no Mark-of-the-Web in the first place. | **Customer machines.** No binary to be scored, and no command line that resembles an attack. |
+| `Winnow.exe` | The `Wacatac` machine-learning verdict above, which quarantines the file outright. | Convenience, where it is not blocked. |
+| `irm ... \| iex` | Nothing on disk to scan — but the command line itself matches the `ClickFix` behaviour endpoint security watches for. | Your own machines, and quick triage. |
+
+There is no option here that nothing objects to. The exe is scored as a novel unsigned binary; the
+one-liner looks like the delivery half of a social-engineering attack. The script on disk is the
+one with the least to trip over, which is why it is the recommendation for someone else's estate.
+
+If the exe is ever blocked on a machine, the script runs the same application:
 
 ```powershell
 powershell.exe -STA -ExecutionPolicy Bypass -File .\Winnow.ps1
@@ -54,7 +120,9 @@ Both files are unsigned, so each release publishes a SHA-256 for each — worth
 
 ### In ScreenConnect Backstage
 
-Copy the file to the machine and run it from the Backstage command prompt:
+Copy the file to the machine and run it from the Backstage command prompt. This is a customer
+endpoint, so it is the case where the `irm ... | iex` shortcut is worth *not* using — see
+[Which one to use](#which-one-to-use).
 
 ```bat
 C:\Windows\Temp\Winnow.exe
@@ -138,8 +206,16 @@ place. A **`presets.json` file placed next to the executable** is what makes the
 a rebuild — an external file is readable whatever is compiled in, so this works the same for the
 exe and the script.
 
-Click **Presets…** in the toolbar. The file is found next to `Winnow.exe` (or `Winnow.ps1`)
-wherever you put it, regardless of the working directory you launched from.
+Click **Presets…** in the toolbar. Where the file lives depends on how you started Winnow:
+
+| Launched as | `presets.json` is read from |
+|---|---|
+| `Winnow.exe` | The executable's own folder, wherever you put it. |
+| `Winnow.ps1` | The script's own folder. |
+| `irm ... \| iex` | `%LOCALAPPDATA%\Winnow\`, since there is no file to sit beside. |
+
+In every case it is resolved from the application, never from the working directory you happened
+to launch from — and the editor shows the exact path it is using along the bottom of its window.
 
 ### The preset editor
 
