@@ -827,23 +827,47 @@ function Invoke-Export {
 # this thread" the instant it ran - the setup can't happen inside the handler itself,
 # since the failure occurs before the first statement of the scriptblock executes.
 # Queries run synchronously instead; Application.DoEvents() keeps the UI painting.
+function New-QueryArgument {
+    # Every caller builds the same shape. The script runs under Set-StrictMode -Version Latest,
+    # where reading a key a hashtable does not have is a terminating error - so a caller that
+    # omitted the keys it had no use for made Invoke-EventQuery throw the moment it tested one.
+    param(
+        $Preset,
+        $FilterHash,
+        [string] $AppName,
+        $SecurityIdentity,
+        [int]    $MaxEvents,
+        [string] $Keyword
+    )
+    return @{
+        Preset           = $Preset
+        FilterHash       = $FilterHash
+        AppName          = $AppName
+        SecurityIdentity = $SecurityIdentity
+        MaxEvents        = $MaxEvents
+        Keyword          = $Keyword
+    }
+}
+
 function Invoke-EventQuery {
+    # Reads its argument by index, not by property. Index access on a missing key yields $null
+    # under StrictMode; property access throws. New-QueryArgument should make that impossible
+    # anyway, but this is the place the failure actually surfaced, so it is guarded here too.
     param($Argument)
-    $kw = $Argument.Keyword
+    $kw = $Argument['Keyword']
     try {
-        if ($Argument.Preset) {
-            $events = Get-EventsForPreset -Preset $Argument.Preset -MaxEvents $Argument.MaxEvents
+        if ($Argument['Preset']) {
+            $events = Get-EventsForPreset -Preset $Argument['Preset'] -MaxEvents $Argument['MaxEvents']
             return @{ Events = $events; Keyword = $kw }
-        } elseif ($Argument.AppName) {
-            $events = Get-EventsForApp -AppName $Argument.AppName -MaxEvents $Argument.MaxEvents
+        } elseif ($Argument['AppName']) {
+            $events = Get-EventsForApp -AppName $Argument['AppName'] -MaxEvents $Argument['MaxEvents']
             return @{ Events = $events; Keyword = $kw }
-        } elseif ($Argument.SecurityIdentity) {
-            $si     = $Argument.SecurityIdentity
-            $events = Get-SecurityEventsByIdentity -UserName $si.UserName -HostName $si.HostName -IPAddress $si.IPAddress -MaxEvents $Argument.MaxEvents
+        } elseif ($Argument['SecurityIdentity']) {
+            $si     = $Argument['SecurityIdentity']
+            $events = Get-SecurityEventsByIdentity -UserName $si['UserName'] -HostName $si['HostName'] -IPAddress $si['IPAddress'] -MaxEvents $Argument['MaxEvents']
             return @{ Events = $events; Keyword = $kw }
         } else {
-            $fh     = $Argument.FilterHash
-            $events = Get-WinEvent -FilterHashtable $fh -MaxEvents $Argument.MaxEvents -ErrorAction Stop
+            $events = Get-WinEvent -FilterHashtable $Argument['FilterHash'] -MaxEvents $Argument['MaxEvents'] -ErrorAction Stop
             return @{ Events = $events; Keyword = $kw }
         }
     } catch [System.Diagnostics.Eventing.Reader.EventLogNotFoundException] {
@@ -1133,15 +1157,22 @@ function New-PresetButton {
     $button.Tag            = $Preset
     if ($Preset.Description) { $toolTip.SetToolTip($button, $Preset.Description) }
 
-    $button.Add_MouseEnter({ $this.BackColor = [System.Drawing.Color]::FromArgb(180,210,255) })
+    # Both take the button from $sender rather than $this. GetNewClosure captures the defining
+    # scope, where $this does not exist, so inside the closure $this was $null and every
+    # mouse-leave raised an error - once per button the pointer crossed.
+    $button.Add_MouseEnter({
+        param($sender, $eventArgs)
+        $sender.BackColor = [System.Drawing.Color]::FromArgb(180,210,255)
+    })
     $button.Add_MouseLeave({
-        $data = $this.Tag
-        $this.BackColor = if ($script:GroupColors.ContainsKey($data.Group)) {
-            $script:GroupColors[$data.Group]
+        param($sender, $eventArgs)
+        $data = $sender.Tag
+        $sender.BackColor = if ($data -and $script:GroupColors.ContainsKey($data['Group'])) {
+            $script:GroupColors[$data['Group']]
         } else {
             [System.Drawing.SystemColors]::Control
         }
-    }.GetNewClosure())
+    })
     $button.Add_Click({
         param($sender, $eventArgs)
         $data = $sender.Tag
@@ -1952,13 +1983,8 @@ function Invoke-Search {
 
     Set-Searching $true
 
-    $workerArgs = @{
-        Preset     = $null
-        FilterHash = $fh
-        MaxEvents  = [int]$nudMaxEvents.Value
-        Keyword    = $txtKeyword.Text.Trim()
-    }
-    Invoke-QuerySync $workerArgs
+    Invoke-QuerySync (New-QueryArgument -FilterHash $fh `
+        -MaxEvents ([int]$nudMaxEvents.Value) -Keyword $txtKeyword.Text.Trim())
 }
 
 function Invoke-PresetSearch {
@@ -1973,13 +1999,8 @@ function Invoke-PresetSearch {
     }
 
     Set-Searching $true
-    $workerArgs = @{
-        Preset     = $Preset
-        FilterHash = $null
-        MaxEvents  = [int]$nudMaxEvents.Value
-        Keyword    = $txtKeyword.Text.Trim()
-    }
-    Invoke-QuerySync $workerArgs
+    Invoke-QuerySync (New-QueryArgument -Preset $Preset `
+        -MaxEvents ([int]$nudMaxEvents.Value) -Keyword $txtKeyword.Text.Trim())
 }
 
 function Invoke-AppSearch {
@@ -1990,14 +2011,8 @@ function Invoke-AppSearch {
         return
     }
     Set-Searching $true
-    $workerArgs = @{
-        Preset     = $null
-        FilterHash = $null
-        AppName    = $app
-        MaxEvents  = [int]$nudMaxEvents.Value
-        Keyword    = $txtKeyword.Text.Trim()
-    }
-    Invoke-QuerySync $workerArgs
+    Invoke-QuerySync (New-QueryArgument -AppName $app `
+        -MaxEvents ([int]$nudMaxEvents.Value) -Keyword $txtKeyword.Text.Trim())
 }
 
 function Invoke-SecurityIdentitySearch {
@@ -2018,14 +2033,8 @@ function Invoke-SecurityIdentitySearch {
         if ($r -eq [System.Windows.Forms.DialogResult]::No) { return }
     }
     Set-Searching $true
-    $workerArgs = @{
-        Preset           = $null
-        FilterHash       = $null
-        SecurityIdentity = @{ UserName = $u; HostName = $h; IPAddress = $ip }
-        MaxEvents        = [int]$nudMaxEvents.Value
-        Keyword          = $txtKeyword.Text.Trim()
-    }
-    Invoke-QuerySync $workerArgs
+    Invoke-QuerySync (New-QueryArgument -SecurityIdentity @{ UserName = $u; HostName = $h; IPAddress = $ip } `
+        -MaxEvents ([int]$nudMaxEvents.Value) -Keyword $txtKeyword.Text.Trim())
 }
 
 function Invoke-ClearFilters {

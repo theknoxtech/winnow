@@ -84,6 +84,14 @@ jobs:
         shell: pwsh
         run: .\tests\Test-PresetEditor.ps1
 
+      # Builds the real window and drives its handlers. The suites above cannot see a handler
+      # that parses fine and throws the first time a user touches it, which is how a broken
+      # Search button and an error on every preset hover both reached a release.
+      # Runs under windows-powershell for the STA apartment WinForms needs.
+      - name: Test the UI handlers
+        shell: powershell
+        run: .\tests\Test-UiSmoke.ps1
+
       # The preset reference in the README is generated from the script. Failing here rather than
       # letting it drift is the point - the hand-maintained version did drift, once.
       - name: Check the preset reference is current
