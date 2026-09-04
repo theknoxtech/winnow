@@ -29,11 +29,18 @@ reach for on a customer machine. See [Which one to use](#which-one-to-use) for w
 ### Running it straight from the URL
 
 ```powershell
-irm https://github.com/theknoxtech/winnow/releases/latest/download/Winnow.ps1 | iex
+irm siliconscripted.com/winnow | iex
 ```
 
 Nothing is written to disk, nothing is installed, and you always get the current release. Handy
 for a quick look at your own machine.
+
+That short URL is a 302 to the release asset, so it needs no maintenance across releases. The
+asset itself is equally usable if you would rather not depend on the redirect:
+
+```powershell
+irm https://github.com/theknoxtech/winnow/releases/latest/download/Winnow.ps1 | iex
+```
 
 **Think before pasting this on a customer endpoint.** `irm <url> | iex` is the defining shape of
 the *ClickFix* social-engineering attack — persuading someone to paste a command that downloads
@@ -60,13 +67,18 @@ it. On someone else's estate, prefer the script.
   (`powershell.exe` always, `pwsh` since 7.3). On an older `pwsh`, or with an explicit `-mta`, the
   script notices and restarts itself in one.
 
-### A shorter URL
+### How the short URL works
 
-Only DNS stands between the above and `irm winnow.siliconscripted.com | iex`. On Cloudflare, add a
-**Redirect Rule** on the `siliconscripted.com` zone: match the hostname or path you want, and
-issue a **302** to the release asset URL above. `irm` follows redirects, so nothing in the script
-has to change. Keep it pointing at `releases/latest/download/` rather than a tag, so the short URL
-keeps working across releases without being touched.
+`siliconscripted.com/winnow` is a Cloudflare Redirect Rule issuing a **302** to
+`https://github.com/theknoxtech/winnow/releases/latest/download/Winnow.ps1`. GitHub then answers
+*that* with its own 302 to the current tag. `irm` follows the chain, so a release re-points the
+short URL on its own and the rule never needs touching.
+
+Two details worth keeping if the rule is ever rebuilt: match on `lower(http.request.uri.path)` so
+`/Winnow` works too, and keep the target on `releases/latest/download/` rather than a tag.
+
+The script's own restart path deliberately uses the GitHub URL rather than this one, so that
+recovering from a wrong thread apartment does not depend on the redirect being up.
 
 ### Which one to use
 
