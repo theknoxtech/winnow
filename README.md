@@ -365,6 +365,7 @@ uses the system proxy, since a SYSTEM process has no per-user proxy configuratio
 | `build/Build-Exe.ps1` | Compiles `Winnow.ps1` into `dist\Winnow.exe` with ps2exe. Refuses to build a script that does not parse, so a typo cannot become a broken exe. |
 | `tests/Test-PresetOverrides.ps1` | Tests the `presets.json` merge - partial overlay, disable, add, and safe fallback on a malformed file. Run by CI. |
 | `tests/Test-PresetEditor.ps1` | Tests the editor's save path: the delta it writes has to re-import to exactly what it was exported from, or an edit silently reverts on the next launch. Run by CI. |
+| `tests/Test-UiSmoke.ps1` | Builds the real window and drives its event handlers, looking for the errors that only appear at runtime - a handler that parses fine and throws the first time it is used. Needs STA, so it re-launches itself under `powershell.exe -STA`. Run by CI. |
 | `build/Generate-PresetDocs.ps1` | Regenerates the preset reference above, reading the preset array out of `Winnow.ps1` via the PowerShell parser so the two cannot disagree. |
 | `build/Generate-Icon.ps1` | Regenerates `winnow.ico` and `docs/images/icon.png`. |
 | `src/`, `tests/` | A C# / WPF rewrite, retained but **not shipped**. Its remaining advantage over the script is cancellable searches; the preset editor and `presets.json` side-car it was built for both exist here now. Kept in case signing ever becomes available and it is worth picking back up. |
