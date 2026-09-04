@@ -22,7 +22,7 @@
 
 .EXAMPLE
     .\build\Build-Exe.ps1
-    .\build\Build-Exe.ps1 -Version 2.1.0
+    .\build\Build-Exe.ps1 -Version 2.1.1
 #>
 [CmdletBinding()]
 param(
