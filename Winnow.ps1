@@ -1173,13 +1173,17 @@ function New-PresetButton {
             [System.Drawing.SystemColors]::Control
         }
     })
+    # No GetNewClosure here either. It captures the variables of the defining scope, which froze
+    # $cboLogSource to whatever it was at button-build time - under some hosting arrangements
+    # that is $null, and the handler then fails on a property of nothing. Without it the control
+    # is resolved when the button is actually clicked, which always works.
     $button.Add_Click({
         param($sender, $eventArgs)
         $data = $sender.Tag
-        $cboLogSource.Text = $data.LogName
+        $cboLogSource.Text = $data['LogName']
         $txtEventId.Text   = ''
         Invoke-PresetSearch -Preset $data
-    }.GetNewClosure())
+    })
 
     return $button
 }

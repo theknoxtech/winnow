@@ -87,9 +87,12 @@ jobs:
       # Builds the real window and drives its handlers. The suites above cannot see a handler
       # that parses fine and throws the first time a user touches it, which is how a broken
       # Search button and an error on every preset hover both reached a release.
-      # Runs under windows-powershell for the STA apartment WinForms needs.
+      # Invoked the same way it is run locally. The script re-launches itself under
+      # powershell.exe -STA -File, which WinForms needs and which gives it a script scope of its
+      # own - dot-sourcing it into the host's scope changes how closures capture and made this
+      # fail here while passing everywhere else.
       - name: Test the UI handlers
-        shell: powershell
+        shell: pwsh
         run: .\tests\Test-UiSmoke.ps1
 
       # The preset reference in the README is generated from the script. Failing here rather than
