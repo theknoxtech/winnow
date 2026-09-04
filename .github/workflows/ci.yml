@@ -78,6 +78,12 @@ jobs:
         shell: pwsh
         run: .\tests\Test-PresetOverrides.ps1
 
+      # The editor writes presets.json back out as a delta, which has to re-import to exactly
+      # what it was exported from. Drift here silently reverts someone's edits on the next launch.
+      - name: Test the preset editor
+        shell: pwsh
+        run: .\tests\Test-PresetEditor.ps1
+
       # The preset reference in the README is generated from the script. Failing here rather than
       # letting it drift is the point - the hand-maintained version did drift, once.
       - name: Check the preset reference is current

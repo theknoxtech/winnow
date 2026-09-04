@@ -266,9 +266,15 @@ function ConvertTo-Preset {
         $key   = $script:PresetFieldMap[$jsonName]
         $value = $Fields[$jsonName]
 
-        # JSON numbers arrive as Int64, and the event log filter hashtable wants Int32.
-        if ($key -eq 'Id' -or $key -eq 'Id2') { $value = @($value | ForEach-Object { [int]$_ }) }
-        elseif ($key -eq 'ProviderName')      { $value = @($value) }
+        # JSON numbers arrive as Int64, and the event log filter hashtable wants Int32. The null
+        # filtering is not defensive padding: a cleared list is written as JSON null, and a
+        # hand-edited file can hold [null] or a stray empty string. Without it, null would cast
+        # to a real Event ID of 0 and quietly return nothing for the rest of that preset's life.
+        if ($key -eq 'Id' -or $key -eq 'Id2') {
+            $value = @($value | Where-Object { $null -ne $_ -and "$_".Trim() } | ForEach-Object { [int]$_ })
+        } elseif ($key -eq 'ProviderName') {
+            $value = @($value | Where-Object { $null -ne $_ -and "$_".Trim() })
+        }
 
         $preset[$key] = $value
     }
@@ -356,6 +362,226 @@ function New-PresetTemplateFile {
 }
 '@
     Set-Content -Path $script:PresetFilePath -Value $template -Encoding UTF8
+}
+
+# --- Writing overrides back out ----------------------------------------------
+# The inverse of the merge above. The editor hands back the whole preset set; what gets written
+# is only what differs from the built-ins, so presets.json stays small, diffs cleanly, and a
+# preset the user never touched keeps tracking future Winnow releases instead of being pinned
+# to whatever the built-in happened to be on the day they opened the editor.
+
+# Field write order. Fixed so a saved file has a stable shape rather than reordering itself on
+# every save, which would make every diff look like a rewrite.
+$script:PresetJsonOrder = @(
+    'group', 'label', 'logname', 'id', 'providername',
+    'messagefilter', 'logname2', 'id2', 'description'
+)
+
+function Get-BuiltInPreset {
+    param([string] $Label)
+    foreach ($preset in $script:BuiltInPresets) {
+        if ($preset['Label'] -eq $Label) { return $preset }
+    }
+    return $null
+}
+
+function Copy-Preset {
+    # Presets are copied into the editor so that cancelling really does discard everything. A
+    # shallow copy is not enough: the Id and ProviderName arrays would still be shared with the
+    # live set, and editing one would change the other.
+    param($Preset)
+
+    $copy = [ordered]@{}
+    foreach ($key in $Preset.Keys) {
+        $value = $Preset[$key]
+        # Assigned from an if statement, not by one. A block that emits a one-element array has
+        # it unrolled to a bare scalar on the way out, which would turn a single-Event-ID preset
+        # into one whose Id is an int, and an empty list into $null. A direct assignment does not.
+        if ($value -is [System.Array]) {
+            $copy[$key] = @($value)
+        } else {
+            $copy[$key] = $value
+        }
+    }
+    return $copy
+}
+
+function Test-PresetValueEmpty {
+    param($Value)
+    if ($null -eq $Value)            { return $true }
+    if ($Value -is [string])         { return [string]::IsNullOrWhiteSpace($Value) }
+    if ($Value -is [System.Array])   { return $Value.Count -eq 0 }
+    return $false
+}
+
+function Test-PresetValueEqual {
+    # ProviderName is a bare string in some built-ins and an array in others, and JSON always
+    # brings it back as an array - so both sides are normalised to a list before comparing,
+    # otherwise an untouched preset would look modified purely because of its shape.
+    param($Left, $Right)
+
+    if (Test-PresetValueEmpty $Left) { return (Test-PresetValueEmpty $Right) }
+    if (Test-PresetValueEmpty $Right) { return $false }
+
+    if ($Left -is [System.Array] -or $Right -is [System.Array]) {
+        $leftItems  = @($Left)
+        $rightItems = @($Right)
+        if ($leftItems.Count -ne $rightItems.Count) { return $false }
+        for ($i = 0; $i -lt $leftItems.Count; $i++) {
+            if ("$($leftItems[$i])" -ne "$($rightItems[$i])") { return $false }
+        }
+        return $true
+    }
+    return ("$Left" -eq "$Right")
+}
+
+function ConvertTo-PresetOverrideEntry {
+    # The smallest entry that reproduces $Preset from $BuiltIn, or $null when nothing differs.
+    # A $null $BuiltIn means a custom preset, which has nothing to diff against and is written
+    # out in full.
+    param($Preset, $BuiltIn)
+
+    $entry   = [ordered]@{}
+    $changed = $false
+
+    foreach ($jsonName in $script:PresetJsonOrder) {
+        if ($jsonName -eq 'label') { $entry['label'] = $Preset['Label']; continue }
+
+        $key     = $script:PresetFieldMap[$jsonName]
+        $current = if ($Preset.Contains($key)) { $Preset[$key] } else { $null }
+
+        if ($null -eq $BuiltIn) {
+            if (Test-PresetValueEmpty $current) { continue }
+            $entry[$jsonName] = $current
+            $changed = $true
+            continue
+        }
+
+        $original = if ($BuiltIn.Contains($key)) { $BuiltIn[$key] } else { $null }
+        if (Test-PresetValueEqual $current $original) { continue }
+
+        # An emptied field is written as an empty value rather than omitted: omitting it would
+        # mean "unchanged", and the built-in's value would come straight back on next launch.
+        if (-not (Test-PresetValueEmpty $current)) {
+            $entry[$jsonName] = $current
+        } elseif ($key -eq 'Id' -or $key -eq 'Id2' -or $key -eq 'ProviderName') {
+            $entry[$jsonName] = @()
+        } else {
+            $entry[$jsonName] = ''
+        }
+        $changed = $true
+    }
+
+    if (-not $changed) { return $null }
+    return $entry
+}
+
+function Export-PresetOverrides {
+    # Round-trips with Import-PresetOverrides by construction: whatever this omits is, by
+    # definition, identical to the built-in that Import starts from.
+    param([Parameter(Mandatory)] $Presets)
+
+    $entries = [System.Collections.Generic.List[object]]::new()
+    foreach ($preset in $Presets) {
+        $entry = ConvertTo-PresetOverrideEntry -Preset $preset -BuiltIn (Get-BuiltInPreset $preset['Label'])
+        if ($entry) { $null = $entries.Add($entry) }
+    }
+
+    # A built-in missing from the set was hidden, and that has to be recorded explicitly -
+    # simply leaving it out is how the file says "unchanged", which would bring it back.
+    $keptLabels = @($Presets | ForEach-Object { $_['Label'] })
+    foreach ($builtIn in $script:BuiltInPresets) {
+        if ($keptLabels -notcontains $builtIn['Label']) {
+            $null = $entries.Add([ordered]@{ label = $builtIn['Label']; disabled = $true })
+        }
+    }
+
+    $document = [ordered]@{
+        '_comment' = 'Written by the Winnow preset editor. Only differences from the built-in presets are stored, so a preset that is absent here simply uses its built-in definition. Hand-editing works fine, but saving from the editor rewrites this file: your changes survive, your formatting and any comments do not.'
+        'presets'  = @($entries)
+    }
+
+    $json = $document | ConvertTo-Json -Depth 6
+    Set-Content -Path $script:PresetFilePath -Value $json -Encoding UTF8
+    return $entries.Count
+}
+
+# --- Editor field parsing ----------------------------------------------------
+# The editor exposes lists as plain comma-separated text, which is far quicker to edit than a
+# grid. These turn that text back into the typed values the query builder expects, and throw
+# rather than silently discarding a value the user meant to keep.
+
+function Read-IdList {
+    param([string] $Text, [string] $FieldName = 'Event IDs')
+
+    $ids = [System.Collections.Generic.List[int]]::new()
+    foreach ($token in ($Text -split '[,;\s]+' | Where-Object { $_ })) {
+        $parsed = 0
+        if (-not [int]::TryParse($token, [ref] $parsed)) {
+            throw "$FieldName contains '$token', which is not a number."
+        }
+        $null = $ids.Add($parsed)
+    }
+    return ,@($ids)
+}
+
+function Read-NameList {
+    param([string] $Text)
+    return ,@($Text -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+function Format-PresetList {
+    param($Value)
+    if (Test-PresetValueEmpty $Value) { return '' }
+    return (@($Value) -join ', ')
+}
+
+# --- Editor rows -------------------------------------------------------------
+# One row per preset as the editor sees it. Kept here rather than with the dialog because this
+# is data, not UI: a row is a copy of a preset plus whether it is currently switched off.
+
+$script:EditorRows = $null
+
+function New-EditorRow {
+    param($Preset, [bool] $Hidden)
+    return [pscustomobject]@{ Preset = (Copy-Preset $Preset); Hidden = $Hidden }
+}
+
+function New-EditorRowList {
+    # The live set plus the built-ins currently hidden by an override. Without the second half
+    # there would be no way back: hiding a preset would remove the only place to un-hide it.
+    $rows   = [System.Collections.Generic.List[object]]::new()
+    $labels = @($script:Presets | ForEach-Object { $_['Label'] })
+
+    foreach ($preset in $script:Presets)        { $null = $rows.Add((New-EditorRow $preset $false)) }
+    foreach ($builtIn in $script:BuiltInPresets) {
+        if ($labels -notcontains $builtIn['Label']) { $null = $rows.Add((New-EditorRow $builtIn $true)) }
+    }
+    # Returned with a leading comma so the list survives as a list. Without it the pipeline
+    # enumerates it into a fixed-size array, and New, Clone and Delete cannot add or remove.
+    return ,$rows
+}
+
+function Get-EditorRowStatus {
+    param($Row)
+    if ($Row.Hidden) { return 'Hidden' }
+
+    $builtIn = Get-BuiltInPreset $Row.Preset['Label']
+    if (-not $builtIn) { return 'Custom' }
+    if (ConvertTo-PresetOverrideEntry -Preset $Row.Preset -BuiltIn $builtIn) { return 'Modified' }
+    return 'Built-in'
+}
+
+function New-UniqueEditorLabel {
+    # Rows are passed in rather than read from script state, so this stays a pure function of
+    # its inputs and can be tested without standing up the dialog.
+    param([Parameter(Mandatory)] [string] $Base, $Rows)
+    $labels = @($Rows | ForEach-Object { $_.Preset['Label'] })
+    if ($labels -notcontains $Base) { return $Base }
+    for ($n = 2; $n -lt 500; $n++) {
+        if ($labels -notcontains "$Base $n") { return "$Base $n" }
+    }
+    return "$Base $([guid]::NewGuid().ToString('N').Substring(0,4))"
 }
 
 # Applied at startup; the Presets... button re-runs it after an edit.
@@ -803,7 +1029,7 @@ $toolTip             = New-Object System.Windows.Forms.ToolTip
 $toolTip.AutoPopDelay = 20000
 $toolTip.InitialDelay = 400
 $toolTip.ReshowDelay  = 200
-$toolTip.SetToolTip($btnPresets, "Edit presets.json to add, change or hide presets")
+$toolTip.SetToolTip($btnPresets, "Add, change, hide or test presets")
 
 foreach ($pair in @(
     @((New-Label 'Keyword:'), $txtKeyword)
@@ -1138,7 +1364,541 @@ $null = $status.Items.Add($lblEnvironment)
 $rootTable.Controls.Add($status, 0, 3)
 #endregion
 
-#region 6 - Event Wiring and Search Logic
+#region 6 - Preset Editor
+
+# A window over the same presets.json the merge in Region 3 reads. Everything here is editing an
+# in-memory copy: nothing touches the live preset set or the file until Save, so Cancel is a real
+# cancel. Hand-editing the JSON still works and is still supported - this is a faster front end
+# to it, not a replacement format.
+
+$script:EditorIndex   = -1
+$script:EditorLoading = $false
+
+function Show-EditorProblem {
+    param([string] $Message)
+    [void][System.Windows.Forms.MessageBox]::Show(
+        $Message, 'Presets',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Warning)
+}
+
+function New-EditorListItem {
+    param($Row)
+    $item = New-Object System.Windows.Forms.ListViewItem($Row.Preset['Label'])
+    $null = $item.SubItems.Add([string]$Row.Preset['Group'])
+    $null = $item.SubItems.Add((Get-EditorRowStatus $Row))
+    if ($Row.Hidden) { $item.ForeColor = [System.Drawing.Color]::Gray }
+    return $item
+}
+
+function Update-EditorRow {
+    param([int] $Index)
+    if ($Index -lt 0 -or $Index -ge $script:EdList.Items.Count) { return }
+
+    $row  = $script:EditorRows[$Index]
+    $item = $script:EdList.Items[$Index]
+    $item.Text             = $row.Preset['Label']
+    $item.SubItems[1].Text = [string]$row.Preset['Group']
+    $item.SubItems[2].Text = Get-EditorRowStatus $row
+    $item.ForeColor        = if ($row.Hidden) {
+        [System.Drawing.Color]::Gray
+    } else {
+        [System.Drawing.SystemColors]::WindowText
+    }
+}
+
+function Update-EditorList {
+    # Rebuilds the list and moves the selection itself rather than letting the ListView's own
+    # change event do it, so adding or deleting a preset lands on the right row exactly once.
+    param([int] $Select = -1)
+
+    $script:EditorLoading = $true
+    try {
+        $script:EdList.BeginUpdate()
+        $script:EdList.Items.Clear()
+        foreach ($row in $script:EditorRows) { $null = $script:EdList.Items.Add((New-EditorListItem $row)) }
+        $script:EdList.EndUpdate()
+
+        if ($Select -ge 0 -and $Select -lt $script:EdList.Items.Count) {
+            $script:EdList.Items[$Select].Selected = $true
+            $script:EdList.Items[$Select].EnsureVisible()
+            $script:EditorIndex = $Select
+        } else {
+            $script:EditorIndex = -1
+        }
+    } finally {
+        $script:EditorLoading = $false
+    }
+    Show-EditorFields $script:EditorIndex
+}
+
+function Show-EditorFields {
+    # Loads one row into the fields. Guarded by EditorLoading throughout: every field raises a
+    # change event as it is populated, and without the guard those would write straight back
+    # into the row that is being displayed.
+    param([int] $Index)
+
+    $script:EditorLoading = $true
+    try {
+        $fields = @($script:EdGroup, $script:EdLabel, $script:EdLog, $script:EdIds,
+                    $script:EdProviders, $script:EdFilter, $script:EdLog2, $script:EdIds2,
+                    $script:EdDescription)
+        foreach ($field in $fields) { $field.Enabled = ($Index -ge 0) }
+
+        if ($Index -lt 0) {
+            foreach ($field in $fields) { $field.Text = '' }
+            $script:EdHidden.Enabled = $false
+            $script:EdDelete.Enabled = $false
+            $script:EdClone.Enabled  = $false
+            $script:EdTest.Enabled   = $false
+            return
+        }
+
+        $row    = $script:EditorRows[$Index]
+        $preset = $row.Preset
+        $script:EdGroup.Text       = [string]$preset['Group']
+        $script:EdLabel.Text       = [string]$preset['Label']
+        $script:EdLog.Text         = [string]$preset['LogName']
+        $script:EdIds.Text         = Format-PresetList $preset['Id']
+        $script:EdProviders.Text   = Format-PresetList $preset['ProviderName']
+        $script:EdFilter.Text      = [string]$preset['MessageFilter']
+        $script:EdLog2.Text        = [string]$preset['LogName2']
+        $script:EdIds2.Text        = Format-PresetList $preset['Id2']
+        $script:EdDescription.Text = [string]$preset['Description']
+        $script:EdHidden.Checked   = $row.Hidden
+
+        # Hiding only means something for a built-in - it is how you switch one off without
+        # losing it. A custom preset has nothing to fall back to, so Delete is the operation
+        # that applies, and exactly one of the two is offered at a time.
+        $isBuiltIn = [bool](Get-BuiltInPreset $preset['Label'])
+        $script:EdHidden.Enabled = $isBuiltIn
+        $script:EdDelete.Enabled = -not $isBuiltIn
+        $script:EdClone.Enabled  = $true
+        $script:EdTest.Enabled   = $true
+    } finally {
+        $script:EditorLoading = $false
+    }
+}
+
+function Test-EditorFieldInput {
+    # Validation only. Split from the write below so that a rejected edit changes nothing at
+    # all - a half-applied preset would be worse than a refused one.
+    param([hashtable] $Values)
+
+    if (-not $Values.Label) { Show-EditorProblem 'A preset needs a name.'; return $false }
+    if (-not $Values.Log)   { Show-EditorProblem 'A preset needs a log to search.'; return $false }
+
+    for ($i = 0; $i -lt $script:EditorRows.Count; $i++) {
+        if ($i -eq $script:EditorIndex) { continue }
+        if ($script:EditorRows[$i].Preset['Label'] -eq $Values.Label) {
+            Show-EditorProblem ("Another preset is already called '$($Values.Label)'. Names are " +
+                'how presets.json identifies a preset, so they have to be unique.')
+            return $false
+        }
+    }
+
+    if ($Values.Log2 -and $Values.Ids2.Count -eq 0) {
+        Show-EditorProblem ('A second log needs its own Event IDs. Without them the whole of ' +
+            "'$($Values.Log2)' would be returned alongside the first log.")
+        return $false
+    }
+    return $true
+}
+
+function Save-EditorFields {
+    # Writes the fields back into the selected row. Returns $false, having said why, if anything
+    # is invalid - so a mistyped Event ID stops the save rather than being silently dropped.
+    if ($script:EditorIndex -lt 0) { return $true }
+
+    try {
+        $values = @{
+            Label     = $script:EdLabel.Text.Trim()
+            Log       = $script:EdLog.Text.Trim()
+            Log2      = $script:EdLog2.Text.Trim()
+            Ids       = Read-IdList $script:EdIds.Text  'Event IDs'
+            Ids2      = Read-IdList $script:EdIds2.Text 'Second log Event IDs'
+            Providers = Read-NameList $script:EdProviders.Text
+        }
+    } catch {
+        Show-EditorProblem $_.Exception.Message
+        return $false
+    }
+
+    if (-not (Test-EditorFieldInput -Values $values)) { return $false }
+
+    $row    = $script:EditorRows[$script:EditorIndex]
+    $preset = $row.Preset
+    $group  = $script:EdGroup.Text.Trim()
+
+    $preset['Group']         = if ($group) { $group } else { 'Custom' }
+    $preset['Label']         = $values.Label
+    $preset['LogName']       = $values.Log
+    $preset['Id']            = $values.Ids
+    $preset['ProviderName']  = $values.Providers
+    $preset['MessageFilter'] = $script:EdFilter.Text.Trim()
+    $preset['Description']   = $script:EdDescription.Text.Trim()
+
+    if ($values.Log2) {
+        $preset['LogName2'] = $values.Log2
+        $preset['Id2']      = $values.Ids2
+    } else {
+        $preset.Remove('LogName2')
+        $preset.Remove('Id2')
+    }
+
+    $row.Hidden = $script:EdHidden.Checked
+    Update-EditorRow $script:EditorIndex
+    return $true
+}
+
+function Add-EditorPreset {
+    param($Preset, [Parameter(Mandatory)] [string] $Label)
+
+    if (-not (Save-EditorFields)) { return }
+    $new = Copy-Preset $Preset
+    $new['Label'] = New-UniqueEditorLabel -Base $Label -Rows $script:EditorRows
+    $null = $script:EditorRows.Add((New-EditorRow $new $false))
+    Update-EditorList -Select ($script:EditorRows.Count - 1)
+    $script:EdLabel.Focus()
+    $script:EdLabel.SelectAll()
+}
+
+function Remove-EditorPreset {
+    if ($script:EditorIndex -lt 0) { return }
+    $row = $script:EditorRows[$script:EditorIndex]
+
+    # A built-in is never removed from the list, only hidden - deleting it would take away the
+    # one place it could be switched back on.
+    if (Get-BuiltInPreset $row.Preset['Label']) { return }
+
+    $answer = [System.Windows.Forms.MessageBox]::Show(
+        "Delete the custom preset '$($row.Preset['Label'])'?", 'Presets',
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question)
+    if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+    $index = $script:EditorIndex
+    $script:EditorRows.RemoveAt($index)
+    Update-EditorList -Select ([Math]::Min($index, $script:EditorRows.Count - 1))
+}
+
+function Invoke-EditorTest {
+    # Runs the preset as edited, against this machine, right now. Catching a wrong Event ID here
+    # takes seconds; catching it by wondering why a button returns nothing takes a lot longer.
+    if (-not (Save-EditorFields)) { return }
+    if ($script:EditorIndex -lt 0) { return }
+
+    $preset  = $script:EditorRows[$script:EditorIndex].Preset
+    $sample  = 50
+    $script:EdForm.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+    $script:EdStatus.Text = "Testing '$($preset['Label'])'..."
+    $script:EdStatus.Refresh()
+
+    try {
+        $found = @(Get-EventsForPreset -Preset $preset -MaxEvents $sample)
+        $script:EdStatus.Text = if ($found.Count -eq 0) {
+            'No matches on this machine. The log may be empty here, or the Event IDs may be wrong.'
+        } elseif ($found.Count -ge $sample) {
+            "$sample+ matches - most recent $($found[0].TimeCreated)."
+        } else {
+            "$($found.Count) match(es) - most recent $($found[0].TimeCreated)."
+        }
+    } catch [System.UnauthorizedAccessException] {
+        $script:EdStatus.Text = 'Access denied - this log needs Administrator rights.'
+    } catch {
+        $script:EdStatus.Text = "Test failed: $(($_.Exception.Message -split [Environment]::NewLine)[0])"
+    } finally {
+        $script:EdForm.Cursor = [System.Windows.Forms.Cursors]::Default
+    }
+}
+
+function Invoke-EditorSave {
+    if (-not (Save-EditorFields)) { return $false }
+
+    $kept = @($script:EditorRows | Where-Object { -not $_.Hidden } | ForEach-Object { $_.Preset })
+    try {
+        $null = Export-PresetOverrides -Presets $kept
+    } catch {
+        Show-EditorProblem "Could not write the preset file:$([Environment]::NewLine)$($script:PresetFilePath)$([Environment]::NewLine)$([Environment]::NewLine)$($_.Exception.Message)"
+        return $false
+    }
+
+    # Reload from the file just written rather than trusting the in-memory set. This puts every
+    # save through exactly the same merge a cold start would, so a writer bug shows up here,
+    # while the editor is still open, instead of silently on someone else's next launch.
+    Import-PresetOverrides
+    Update-PresetButtons
+    return $true
+}
+
+function New-EditorTextBox {
+    param([bool] $Multiline = $false)
+    $box           = New-Object System.Windows.Forms.TextBox
+    $box.Anchor    = 'Left,Right'
+    $box.Multiline = $Multiline
+    if ($Multiline) {
+        $box.Anchor     = 'Left,Right,Top,Bottom'
+        $box.ScrollBars = 'Vertical'
+    }
+    return $box
+}
+
+function New-EditorCombo {
+    param([string[]] $Items)
+    $combo               = New-Object System.Windows.Forms.ComboBox
+    $combo.DropDownStyle = 'DropDown'
+    $combo.Anchor        = 'Left,Right'
+    $combo.AutoCompleteMode   = 'SuggestAppend'
+    $combo.AutoCompleteSource = 'ListItems'
+    foreach ($item in $Items) { $null = $combo.Items.Add($item) }
+    return $combo
+}
+
+function Add-EditorField {
+    param($Table, [int] $Row, [string] $Caption, $Control, [string] $Hint)
+
+    # Not named $caption: PowerShell variable names are case-insensitive, so it would be the
+    # same variable as the [string] $Caption parameter and the label would be coerced to text.
+    $captionLabel          = New-Object System.Windows.Forms.Label
+    $captionLabel.Text     = $Caption
+    $captionLabel.AutoSize = $true
+    $captionLabel.Anchor   = 'Left'
+    $captionLabel.Margin   = New-Object System.Windows.Forms.Padding(0, 7, 8, 0)
+    $Table.Controls.Add($captionLabel, 0, $Row)
+
+    $Control.Margin = New-Object System.Windows.Forms.Padding(0, 3, 0, 3)
+    $Table.Controls.Add($Control, 1, $Row)
+    if ($Hint) { $script:EdToolTip.SetToolTip($Control, $Hint) }
+}
+
+function New-EditorButton {
+    param([string] $Text, [int] $Width = 84)
+    $button        = New-Object System.Windows.Forms.Button
+    $button.Text   = $Text
+    $button.Width  = $Width
+    $button.Height = 26
+    $button.Margin = New-Object System.Windows.Forms.Padding(4, 0, 0, 0)
+    return $button
+}
+
+function New-EditorDetailTable {
+    # Nine labelled fields, with Description taking whatever height is left over. Built here
+    # rather than inline in Show-PresetEditor to keep that function to assembly and wiring.
+    $groups = @(@($script:BuiltInPresets | ForEach-Object { $_['Group'] } | Sort-Object -Unique) + 'Custom' |
+                Sort-Object -Unique)
+
+    $script:EdGroup       = New-EditorCombo -Items $groups
+    $script:EdLabel       = New-EditorTextBox
+    $script:EdLog         = New-EditorCombo -Items $script:LogSources
+    $script:EdIds         = New-EditorTextBox
+    $script:EdProviders   = New-EditorTextBox
+    $script:EdFilter      = New-EditorTextBox
+    $script:EdLog2        = New-EditorCombo -Items $script:LogSources
+    $script:EdIds2        = New-EditorTextBox
+    $script:EdDescription = New-EditorTextBox -Multiline $true
+
+    $table             = New-Object System.Windows.Forms.TableLayoutPanel
+    $table.Dock        = 'Fill'
+    $table.ColumnCount = 2
+    $table.RowCount    = 9
+    $table.Padding     = New-Object System.Windows.Forms.Padding(10, 0, 0, 0)
+    $null = $table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    $null = $table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    for ($i = 0; $i -lt 8; $i++) {
+        $null = $table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    }
+    $null = $table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+
+    Add-EditorField $table 0 'Group'       $script:EdGroup       'Sets the button colour and groups related presets together.'
+    Add-EditorField $table 1 'Name'        $script:EdLabel       'The button text, and the name presets.json uses to identify this preset.'
+    Add-EditorField $table 2 'Log'         $script:EdLog         'The event log to search, e.g. System, Application, Security.'
+    Add-EditorField $table 3 'Event IDs'   $script:EdIds         'Comma-separated, e.g. 4624, 4625. Leave empty to return the whole log.'
+    Add-EditorField $table 4 'Providers'   $script:EdProviders   'Comma-separated. Narrows a widely reused Event ID to the source that means what you want.'
+    Add-EditorField $table 5 'Message has' $script:EdFilter      'Keeps only events whose message contains this text. For IDs shared across services, such as 7045.'
+    Add-EditorField $table 6 'Second log'  $script:EdLog2        'Optional. Searches a second log at the same time and merges the results.'
+    Add-EditorField $table 7 'Its IDs'     $script:EdIds2        'Event IDs for the second log. Required if a second log is set.'
+    Add-EditorField $table 8 'Description' $script:EdDescription 'Shown as the tooltip on the preset button.'
+
+    return $table
+}
+
+function New-EditorListPanel {
+    $script:EdList              = New-Object System.Windows.Forms.ListView
+    $script:EdList.Dock         = 'Fill'
+    $script:EdList.View         = 'Details'
+    $script:EdList.FullRowSelect = $true
+    $script:EdList.MultiSelect  = $false
+    $script:EdList.HideSelection = $false
+    $null = $script:EdList.Columns.Add('Preset', 150)
+    $null = $script:EdList.Columns.Add('Group', 105)
+    $null = $script:EdList.Columns.Add('Status', 70)
+
+    $script:EdNew    = New-EditorButton 'New'
+    $script:EdClone  = New-EditorButton 'Clone'
+    $script:EdDelete = New-EditorButton 'Delete'
+
+    $buttons             = New-Object System.Windows.Forms.FlowLayoutPanel
+    $buttons.Dock        = 'Bottom'
+    $buttons.Height      = 34
+    $buttons.Padding     = New-Object System.Windows.Forms.Padding(0, 5, 0, 0)
+    $buttons.WrapContents = $false
+    foreach ($button in @($script:EdNew, $script:EdClone, $script:EdDelete)) {
+        $button.Margin = New-Object System.Windows.Forms.Padding(0, 0, 4, 0)
+        $null = $buttons.Controls.Add($button)
+    }
+
+    $panel        = New-Object System.Windows.Forms.Panel
+    $panel.Dock   = 'Fill'
+    $panel.Margin = New-Object System.Windows.Forms.Padding(0)
+    $null = $panel.Controls.Add($script:EdList)
+    $null = $panel.Controls.Add($buttons)
+    return $panel
+}
+
+function New-EditorFooter {
+    $script:EdTest   = New-EditorButton 'Test'
+    $script:EdSave   = New-EditorButton 'Save' 90
+    $script:EdCancel = New-EditorButton 'Cancel'
+
+    $script:EdStatus           = New-Object System.Windows.Forms.Label
+    $script:EdStatus.Dock      = 'Fill'
+    $script:EdStatus.TextAlign = 'MiddleLeft'
+    $script:EdStatus.ForeColor = [System.Drawing.Color]::FromArgb(70, 70, 70)
+    $script:EdStatus.AutoEllipsis = $true
+
+    $right              = New-Object System.Windows.Forms.FlowLayoutPanel
+    $right.Dock         = 'Right'
+    $right.FlowDirection = 'RightToLeft'
+    $right.WrapContents = $false
+    $right.AutoSize     = $true
+    foreach ($button in @($script:EdCancel, $script:EdSave, $script:EdTest)) {
+        $null = $right.Controls.Add($button)
+    }
+
+    $footer         = New-Object System.Windows.Forms.Panel
+    $footer.Dock    = 'Fill'
+    $footer.Padding = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
+    $null = $footer.Controls.Add($script:EdStatus)
+    $null = $footer.Controls.Add($right)
+    return $footer
+}
+
+function Register-EditorHandlers {
+    $script:EdList.Add_SelectedIndexChanged({
+        if ($script:EditorLoading) { return }
+        $selected = if ($script:EdList.SelectedIndices.Count -gt 0) { $script:EdList.SelectedIndices[0] } else { -1 }
+        if ($selected -lt 0 -or $selected -eq $script:EditorIndex) { return }
+
+        # Commit before moving away, so clicking straight to another preset keeps the edit
+        # rather than discarding it. A rejected edit puts the selection back where it was.
+        if (-not (Save-EditorFields)) {
+            $script:EditorLoading = $true
+            try { $script:EdList.Items[$script:EditorIndex].Selected = $true } finally { $script:EditorLoading = $false }
+            return
+        }
+        $script:EditorIndex = $selected
+        Show-EditorFields $selected
+    })
+
+    # Live, so the list reflects a rename as it is typed. Display only - the row itself is not
+    # written until the edit is committed.
+    $script:EdLabel.Add_TextChanged({
+        if ($script:EditorLoading -or $script:EditorIndex -lt 0) { return }
+        $script:EdList.Items[$script:EditorIndex].Text = $script:EdLabel.Text
+    })
+
+    $script:EdHidden.Add_CheckedChanged({
+        if ($script:EditorLoading -or $script:EditorIndex -lt 0) { return }
+        $script:EditorRows[$script:EditorIndex].Hidden = $script:EdHidden.Checked
+        Update-EditorRow $script:EditorIndex
+    })
+
+    $script:EdNew.Add_Click({
+        Add-EditorPreset -Preset ([ordered]@{ Group = 'Custom'; LogName = 'Application'; Description = '' }) -Label 'New Preset'
+    })
+    $script:EdClone.Add_Click({
+        if ($script:EditorIndex -lt 0) { return }
+        $source = $script:EditorRows[$script:EditorIndex].Preset
+        Add-EditorPreset -Preset $source -Label "$($source['Label']) copy"
+    })
+    $script:EdDelete.Add_Click({ Remove-EditorPreset })
+    $script:EdTest.Add_Click({ Invoke-EditorTest })
+
+    $script:EdSave.Add_Click({
+        if (Invoke-EditorSave) {
+            $script:EdForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $script:EdForm.Close()
+        }
+    })
+    $script:EdCancel.Add_Click({
+        $script:EdForm.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $script:EdForm.Close()
+    })
+}
+
+function Show-PresetEditor {
+    # Assembly and wiring only; each piece is built by one of the functions above. Returns the
+    # dialog result so the caller can tell a save from a cancel.
+    $script:EditorRows  = New-EditorRowList
+    $script:EditorIndex = -1
+    $script:EdToolTip   = New-Object System.Windows.Forms.ToolTip
+
+    $script:EdHidden          = New-Object System.Windows.Forms.CheckBox
+    $script:EdHidden.Text     = 'Hide this preset'
+    $script:EdHidden.AutoSize = $true
+    $script:EdHidden.Margin   = New-Object System.Windows.Forms.Padding(10, 6, 0, 0)
+    $script:EdToolTip.SetToolTip($script:EdHidden,
+        'Switches a built-in preset off without losing it. Clear this box to bring it back.')
+
+    # Sized against the desktop it lands on, for the same reason the main window is: a
+    # ScreenConnect Backstage desktop is commonly 1024x768 and can be smaller.
+    $area   = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $width  = [int][Math]::Min(920, [Math]::Max(660, $area.Width  - 60))
+    $height = [int][Math]::Min(600, [Math]::Max(460, $area.Height - 60))
+
+    $script:EdForm                 = New-Object System.Windows.Forms.Form
+    $script:EdForm.Text            = 'Winnow - Presets'
+    $script:EdForm.Size            = New-Object System.Drawing.Size($width, $height)
+    $script:EdForm.MinimumSize     = New-Object System.Drawing.Size(660, 460)
+    $script:EdForm.StartPosition   = 'CenterParent'
+    $script:EdForm.MinimizeBox     = $false
+    $script:EdForm.Font            = New-Object System.Drawing.Font('Segoe UI', 9)
+    $script:EdForm.Padding         = New-Object System.Windows.Forms.Padding(10)
+    # No AcceptButton: Enter belongs to the field being typed in, not to Save.
+
+    $root             = New-Object System.Windows.Forms.TableLayoutPanel
+    $root.Dock        = 'Fill'
+    $root.ColumnCount = 2
+    $root.RowCount    = 3
+    $null = $root.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 340)))
+    $null = $root.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    $null = $root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    $null = $root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    $null = $root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+
+    $root.Controls.Add((New-EditorListPanel), 0, 0)
+    $root.Controls.Add((New-EditorDetailTable), 1, 0)
+    $root.Controls.Add($script:EdHidden, 1, 1)
+
+    $footer = New-EditorFooter
+    $root.SetColumnSpan($footer, 2)
+    $root.Controls.Add($footer, 0, 2)
+    $script:EdForm.Controls.Add($root)
+
+    # Wired after every control exists, so CancelButton and the handlers refer to real objects.
+    $script:EdForm.CancelButton = $script:EdCancel
+    Register-EditorHandlers
+
+    $first = if ($script:EditorRows.Count -gt 0) { 0 } else { -1 }
+    Update-EditorList -Select $first
+    $script:EdStatus.Text = "Editing $($script:PresetFilePath)"
+
+    return $script:EdForm.ShowDialog($mainForm)
+}
+
+#endregion
+
+#region 7 - Event Wiring and Search Logic
 
 function Set-Searching([bool]$active) {
     $btnSearch.Enabled      = -not $active
@@ -1377,50 +2137,14 @@ $btnExport.Add_Click({
 })
 
 $btnPresets.Add_Click({
-    if (-not (Test-Path $script:PresetFilePath)) {
-        try {
-            New-PresetTemplateFile
-        } catch {
-            [System.Windows.Forms.MessageBox]::Show(
-                "Could not create the preset file:`n$($script:PresetFilePath)`n`n$($_.Exception.Message)",
-                'Presets',
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Error)
-            return
-        }
-    }
+    # The editor saves and reloads the preset strip itself, so there is nothing to do on cancel.
+    $result = Show-PresetEditor
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK) { return }
 
-    # Notepad is skipped on a Backstage desktop: it would open on a desktop nobody is looking at,
-    # which reads as the button having done nothing at all.
-    $opened = $false
-    if (-not $script:IsBackstage) {
-        try {
-            Start-Process notepad.exe -ArgumentList "`"$($script:PresetFilePath)`""
-            $opened = $true
-        } catch { }
-    }
-
-    $message = "Preset overrides:`n$($script:PresetFilePath)"
-    if ($opened) {
-        $message += "`n`nOpened in Notepad. Save your changes, then click OK to reload."
-    } else {
-        if (Set-ClipboardTextSafe $script:PresetFilePath) {
-            $message += "`n`nThe path has been copied to the clipboard."
-        }
-        $message += "`n`nEdit the file, then click OK to reload."
-    }
-
-    [System.Windows.Forms.MessageBox]::Show(
-        $message, 'Presets',
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-
-    Import-PresetOverrides
-    Update-PresetButtons
     $lblStatus.Text = if ($script:PresetWarning) {
         $script:PresetWarning
     } else {
-        "Presets reloaded - $($script:Presets.Count) available"
+        "Presets saved - $($script:Presets.Count) available"
     }
 })
 
@@ -1465,7 +2189,7 @@ $txtSecIP.Add_KeyDown($secSearchOnEnter)
 $mainForm.AcceptButton = $btnSearch
 #endregion
 
-#region 7 - Launch
+#region 8 - Launch
 
 # One-shot, deferred update check so it never delays the window showing up. Runs on the UI
 # thread (not a background thread/job - see Region 4's note on why that's unreliable here),
