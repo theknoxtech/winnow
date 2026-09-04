@@ -19,22 +19,29 @@ a **ScreenConnect Backstage** session.
 
 ## Running
 
-Paste this into PowerShell:
+Download **`Winnow.exe`** from [Releases](../../releases) and run it. That is the whole install —
+copy the single file wherever you need it. Right-click → *Run as Administrator* if you need the
+Security log, or any preset that reads it.
+
+Every release also ships **`Winnow.ps1`** — the same application as a plain script, and the one to
+reach for on a customer machine. See [Which one to use](#which-one-to-use) for why.
+
+### Running it straight from the URL
 
 ```powershell
 irm https://github.com/theknoxtech/winnow/releases/latest/download/Winnow.ps1 | iex
 ```
 
-That is the whole thing. Nothing is downloaded to disk, nothing is installed, and you always get
-the current release. Run PowerShell as Administrator first if you need the Security log, or any
-preset that reads it.
+Nothing is written to disk, nothing is installed, and you always get the current release. Handy
+for a quick look at your own machine.
 
-This is also the most reliable way to get Winnow onto a machine, because there is no file for
-anything to object to — see [Two files, and which one to use](#two-files-and-which-one-to-use).
-
-Prefer a file? Download **`Winnow.exe`** from [Releases](../../releases) and run it — copy the
-single file wherever you need it. Every release also ships **`Winnow.ps1`**, the same application
-as a plain script.
+**Think before pasting this on a customer endpoint.** `irm <url> | iex` is the defining shape of
+the *ClickFix* social-engineering attack — persuading someone to paste a command that downloads
+and runs code — and endpoint security products watch for it specifically. Defender ships a whole
+`Trojan:Win32/ClickFix.*` signature family for it. Winnow's own one-liner is not currently flagged,
+but the pattern is monitored, and a false positive here is worse than a blocked download: it
+raises an alert that looks like an attack in progress, with your technician's session attached to
+it. On someone else's estate, prefer the script.
 
 ### What the one-liner does
 
@@ -61,7 +68,7 @@ issue a **302** to the release asset URL above. `irm` follows redirects, so noth
 has to change. Keep it pointing at `releases/latest/download/` rather than a tag, so the short URL
 keeps working across releases without being touched.
 
-### Two files, and which one to use
+### Which one to use
 
 Three ways to run it, and the reason there are three.
 
@@ -74,11 +81,15 @@ available to this project (see [Code signing](#code-signing)).
 That classifier applies to **PE binaries**. A `.ps1` is a text script, so it cannot apply to one at
 all — which is why the fallbacks are what they are:
 
-| How you run it | What can block it |
-|---|---|
-| `irm ... \| iex` | Nothing on disk to scan, no Mark-of-the-Web, no execution policy. The most reliable of the three. |
-| `Winnow.ps1` | Mark-of-the-Web under `RemoteSigned`, cleared by `-ExecutionPolicy Bypass` or `Unblock-File`. |
-| `Winnow.exe` | The `Wacatac` machine-learning verdict above, which quarantines the file outright. |
+| How you run it | What can block it | Where it fits |
+|---|---|---|
+| **`Winnow.ps1`** | Mark-of-the-Web under `RemoteSigned`, cleared by `-ExecutionPolicy Bypass` or `Unblock-File`. Fetching it with `irm -OutFile` or `gh release download` attaches no Mark-of-the-Web in the first place. | **Customer machines.** No binary to be scored, and no command line that resembles an attack. |
+| `Winnow.exe` | The `Wacatac` machine-learning verdict above, which quarantines the file outright. | Convenience, where it is not blocked. |
+| `irm ... \| iex` | Nothing on disk to scan — but the command line itself matches the `ClickFix` behaviour endpoint security watches for. | Your own machines, and quick triage. |
+
+There is no option here that nothing objects to. The exe is scored as a novel unsigned binary; the
+one-liner looks like the delivery half of a social-engineering attack. The script on disk is the
+one with the least to trip over, which is why it is the recommendation for someone else's estate.
 
 If the exe is ever blocked on a machine, the script runs the same application:
 
@@ -97,13 +108,9 @@ Both files are unsigned, so each release publishes a SHA-256 for each — worth
 
 ### In ScreenConnect Backstage
 
-Nothing to copy across, if the machine has outbound HTTPS:
-
-```bat
-powershell.exe -NoProfile -Command "irm https://github.com/theknoxtech/winnow/releases/latest/download/Winnow.ps1 | iex"
-```
-
-Otherwise copy the file to the machine and run it from the Backstage command prompt:
+Copy the file to the machine and run it from the Backstage command prompt. This is a customer
+endpoint, so it is the case where the `irm ... | iex` shortcut is worth *not* using — see
+[Which one to use](#which-one-to-use).
 
 ```bat
 C:\Windows\Temp\Winnow.exe

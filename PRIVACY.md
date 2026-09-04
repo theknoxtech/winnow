@@ -45,9 +45,11 @@ Since neither is signed, those hashes are what confirm the file you downloaded i
 was published. See [README § Verifying a download](README.md#verifying-a-download).
 
 The `irm | iex` one-liner fetches `Winnow.ps1` from the latest release over HTTPS, so it runs that
-same published script and nothing else. It is worth being clear about the trade, though: piping
-straight into `iex` means the script is executed as it arrives, with no opportunity to check a
-hash first. Fetch it to a file instead if you would rather verify before running.
+same published script and nothing else. Two things are worth being clear about, though. Piping
+straight into `iex` executes the script as it arrives, with no opportunity to check a hash first.
+And that command shape is the one used by the *ClickFix* class of social-engineering attack, so
+endpoint security products watch for it — which is a reason to prefer fetching the script to a
+file on a machine that is not yours. See [README § Which one to use](README.md#which-one-to-use).
 
 ## Code signing
 
