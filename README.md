@@ -76,6 +76,7 @@ things. The script detects that and adapts:
 | **Update link** | Copies the release URL rather than launching a browser as SYSTEM. |
 | **Window size** | Sized from the actual desktop, so it fits a 1024×768 Backstage screen instead of opening partly off it. |
 | **Preset strip** | Scrolls within a fixed height, so 36 buttons cannot push the results grid off a short screen. |
+| **Presets…** | Skips opening Notepad, which would appear on a desktop nobody is watching. Shows the `presets.json` path and copies it to the clipboard instead. |
 
 The status bar shows which mode it detected, e.g. `SYSTEM - Winsta0\Backstage desktop`, so you can
 tell at a glance which behaviour is in effect.
@@ -132,29 +133,58 @@ or Backstage.
 
 ## Presets
 
-The 36 presets live in the `$script:Presets` array near the top of `Winnow.ps1`. To add, change or
-remove one, edit that array — each entry is a hashtable:
+The 36 built-in presets are baked into the app, so with `Winnow.exe` they cannot be edited in
+place. A **`presets.json` file placed next to the executable** is what makes them editable without
+a rebuild — an external file is readable whatever is compiled in, so this works the same for the
+exe and the script.
 
-```powershell
-[ordered]@{
-    Group       = 'System Changes'
-    Label       = 'Software Installs'
-    LogName     = 'Application'
-    Id          = @(11707, 1033, 1034)
-    Description = 'MsiInstaller product install/remove'
+Click **Presets…** in the toolbar. It creates the file if it does not exist, opens it, and reloads
+when you are done — no restart. The file is found next to `Winnow.exe` (or `Winnow.ps1`) wherever
+you put it, regardless of the working directory you launched from.
+
+### presets.json
+
+Three things are possible. A `label` that matches a built-in **changes** it, listing only the
+fields you want different. An unrecognised `label` **adds** a preset. `"disabled": true`
+**removes** one.
+
+```json
+{
+  "presets": [
+    { "label": "Logon Events", "id": [4624, 4625, 4634, 4647, 4648] },
+
+    { "label": "Print Jobs", "disabled": true },
+
+    {
+      "group": "Custom",
+      "label": "LOB App Errors",
+      "logName": "Application",
+      "id": [4001, 4002],
+      "providerName": ["AcmeLOB"],
+      "description": "Errors from our line-of-business application"
+    }
+  ]
 }
 ```
 
 | Field | Meaning |
 |---|---|
-| `Group` | Controls the button's colour and grouping. A new group falls back to the default button colour. |
-| `Label` | Button text. |
-| `Description` | Shown in the preset reference below; describes what the preset is for. |
-| `LogName` | Log to query. Required. |
-| `Id` | Event IDs. Omit for every event in the log — this is how the Active Directory presets work. |
-| `LogName2` / `Id2` | An optional second log, queried and merged with the first. |
-| `ProviderName` | Restricts to specific sources. Important when an Event ID is reused. |
-| `MessageFilter` | Substring applied to the message after the query runs. |
+| `label` | Button text, and the key used to match a built-in. Required. |
+| `group` | Controls the button's colour and grouping. Defaults to `Custom`. A new group falls back to the default button colour. |
+| `description` | The button's tooltip. |
+| `logName` | Log to query. Required on a new preset. |
+| `id` | Event IDs. Omit for every event in the log — this is how the Active Directory presets work. |
+| `logName2` / `id2` | An optional second log, queried and merged with the first. |
+| `providerName` | Restricts to specific sources. Important when an Event ID is reused. |
+| `messageFilter` | Substring applied to the message after the query runs. |
+| `disabled` | `true` hides a built-in preset. |
+
+Field names are case-insensitive. A malformed file never takes the app down — it falls back to the
+built-in presets and explains why in the status bar, because a typo in your overrides should cost
+you the overrides, not the tool.
+
+To change the built-ins themselves rather than override them, edit the `$script:Presets` array
+near the top of `Winnow.ps1`; the same field names apply in PascalCase (`LogName`, `Id`).
 
 **Why `ProviderName` matters:** Windows reuses small Event IDs across unrelated providers in the
 same log — System-log ID `1` is used by dozens of sources. Without a provider scope, a preset on
@@ -312,6 +342,7 @@ uses the system proxy, since a SYSTEM process has no per-user proxy configuratio
 |---|---|
 | `Winnow.ps1` | The application, and the source of truth. Everything else is generated from it. |
 | `build/Build-Exe.ps1` | Compiles `Winnow.ps1` into `dist\Winnow.exe` with ps2exe. Refuses to build a script that does not parse, so a typo cannot become a broken exe. |
+| `tests/Test-PresetOverrides.ps1` | Tests the `presets.json` merge - partial overlay, disable, add, and safe fallback on a malformed file. Run by CI. |
 | `build/Generate-PresetDocs.ps1` | Regenerates the preset reference above, reading the preset array out of `Winnow.ps1` via the PowerShell parser so the two cannot disagree. |
 | `build/Generate-Icon.ps1` | Regenerates `winnow.ico` and `docs/images/icon.png`. |
 | `src/`, `tests/` | A C# / WPF rewrite, retained but **not shipped**. It has a preset editor, a `presets.json` side-car, cancellable searches and a test suite. Kept in case signing ever becomes available and it is worth picking back up. |
