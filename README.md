@@ -11,21 +11,37 @@ by user, host, or IP.
 Event Viewer will show you everything. Winnow's job is the opposite: 36 curated presets that go
 straight to the events that explain what actually went wrong on the machine in front of you.
 
-Built for remote support: one `Winnow.ps1`, no installer, no build step, and no dependency beyond
-Windows PowerShell 5.1, which ships in-box on every supported version of Windows. It is designed
-to work correctly inside a **ScreenConnect Backstage** session.
+Built for remote support: one file, no installer, no prerequisites beyond Windows PowerShell 5.1,
+which ships in-box on every supported version of Windows. It is designed to work correctly inside
+a **ScreenConnect Backstage** session.
 
 ![The main window: filter panel, Quick Filters, results grid and detail pane](docs/images/main-window.png)
 
 ## Running
 
-Download `Winnow.ps1` from [Releases](../../releases) and run it:
+Download **`Winnow.exe`** from [Releases](../../releases) and run it. That is the whole install —
+copy the single file wherever you need it. Right-click → *Run as Administrator* if you need the
+Security log, or any preset that reads it.
+
+Every release also ships **`Winnow.ps1`** — the same application as a plain script. It is there as
+a fallback, for the reason below.
+
+### Two files, and which one to use
+
+`Winnow.exe` is the one to reach for. `Winnow.ps1` matters when it gets blocked.
+
+Both are unsigned, and Defender has quarantined unsigned builds from this project before — v1.3.0
+as `Trojan:Win32/Wacatac.B!ml` and v1.3.1 as `Trojan:Win32/Wacatac.C!ml`. Those are cloud
+machine-learning verdicts, not signature matches: they react to an executable being unsigned,
+newly built and rare, largely regardless of what the code does. Signing is the real fix and is not
+available to this project (see [Code signing](#code-signing)).
+
+That classifier applies to **PE binaries**. A `.ps1` is a text script, so it cannot apply to one at
+all. If the exe is ever blocked on a machine, the script runs the same application:
 
 ```powershell
 powershell.exe -STA -ExecutionPolicy Bypass -File .\Winnow.ps1
 ```
-
-Both switches matter:
 
 - **`-ExecutionPolicy Bypass`** — a script downloaded through a browser carries a Mark-of-the-Web
   tag, and under the common `RemoteSigned` policy Windows refuses to run it (*"not digitally
@@ -33,27 +49,18 @@ Both switches matter:
   machine-wide setting. `Unblock-File .\Winnow.ps1` once is the alternative.
 - **`-STA`** — WinForms needs a single-threaded apartment.
 
-Run PowerShell as Administrator if you need the Security log, or any preset that reads it.
-
-The script is unsigned, so each release publishes its SHA-256 — worth
-[checking](#verifying-a-download) before you put it on a customer machine.
-
-### Why a script and not an .exe
-
-Winnow shipped as a compiled `.exe` up to v1.3.1 and got quarantined by Windows Defender twice,
-as `Trojan:Win32/Wacatac.B!ml` and then `Trojan:Win32/Wacatac.C!ml`. That is a cloud
-machine-learning verdict on *PE binaries* — it reacts to an executable being unsigned, newly
-built and rare, regardless of what the code does. Signing is the real fix for it and is not
-currently available to this project (see [Code signing](#code-signing)).
-
-A `.ps1` is a text script, not a PE binary, so that classifier does not apply to it at all. The
-trade is not "no friction" — it is *different* friction: execution policy blocks a downloaded
-script until you pass `-ExecutionPolicy Bypass` or unblock it. That failure is a clear, reversible
-error message rather than an antivirus alert that deletes the file.
+Both files are unsigned, so each release publishes a SHA-256 for each — worth
+[checking](#verifying-a-download) before you put either on a customer machine.
 
 ### In ScreenConnect Backstage
 
-Copy `Winnow.ps1` to the machine and run it from the Backstage command prompt:
+Copy the file to the machine and run it from the Backstage command prompt:
+
+```bat
+C:\Windows\Temp\Winnow.exe
+```
+
+Or, using the script:
 
 ```bat
 powershell.exe -STA -ExecutionPolicy Bypass -File C:\Windows\Temp\Winnow.ps1
@@ -255,17 +262,19 @@ and DNS-server event IDs vary too much to hardcode. On a machine without those l
 
 ## Verifying a download
 
-Every release publishes the SHA-256 of `Winnow.ps1`, both in the release notes and as a
-`Winnow.ps1.sha256` asset. The script is unsigned, so this is what confirms you have the file that
-was actually published:
+Every release publishes a SHA-256 for both files, in the release notes and as `.sha256` assets.
+Neither is signed, so this is what confirms you have the file that was actually published:
 
 ```powershell
+(Get-FileHash Winnow.exe -Algorithm SHA256).Hash
 (Get-FileHash Winnow.ps1 -Algorithm SHA256).Hash
 ```
 
-Being a text file, it has one advantage a binary does not: you can simply read it. It is a single
+`Winnow.ps1` has one advantage the exe does not: you can simply read it. It is a single
 self-contained script with no obfuscation and no downloaded payloads — everything it does is on
-the page.
+the page. The exe is that same script compiled with
+[ps2exe](https://github.com/MScholtes/PS2EXE), which embeds it and hosts the PowerShell runtime,
+so the two are the same application by construction rather than by promise.
 
 ## Code signing
 
@@ -301,20 +310,27 @@ uses the system proxy, since a SYSTEM process has no per-user proxy configuratio
 
 | Path | Contents |
 |---|---|
-| `Winnow.ps1` | The application. This is the shipped artifact — there is nothing to build. |
+| `Winnow.ps1` | The application, and the source of truth. Everything else is generated from it. |
+| `build/Build-Exe.ps1` | Compiles `Winnow.ps1` into `dist\Winnow.exe` with ps2exe. Refuses to build a script that does not parse, so a typo cannot become a broken exe. |
 | `build/Generate-PresetDocs.ps1` | Regenerates the preset reference above, reading the preset array out of `Winnow.ps1` via the PowerShell parser so the two cannot disagree. |
 | `build/Generate-Icon.ps1` | Regenerates `winnow.ico` and `docs/images/icon.png`. |
-| `src/`, `tests/` | A C# / WPF rewrite, retained but **not shipped**. It has a preset editor, a `presets.json` side-car, cancellable searches and a test suite, but it compiles to a `.exe` and was the version Defender quarantined. Kept in case signing ever becomes available. |
+| `src/`, `tests/` | A C# / WPF rewrite, retained but **not shipped**. It has a preset editor, a `presets.json` side-car, cancellable searches and a test suite. Kept in case signing ever becomes available and it is worth picking back up. |
+
+Building the exe locally:
+
+```powershell
+.\build\Build-Exe.ps1 -Version 2.0.0
+```
 
 ### Releasing
 
-Push a version tag matching `v*.*.*`. GitHub Actions verifies the version in the script matches
-the tag, publishes `Winnow.ps1` with its SHA-256, and generates release notes.
+Push a version tag matching `v*.*.*`. GitHub Actions parses the script, checks its version against
+the tag, builds the exe, and publishes both files with their SHA-256s and generated release notes.
 
 ```bash
 git tag v2.0.0
 git push origin v2.0.0
 ```
 
-`$script:AppVersion` near the top of `Winnow.ps1` must match the tag — CI fails the release if it
-does not, since the in-app update check compares that constant against the latest release.
+`$script:AppVersion` near the top of `Winnow.ps1` must match the tag — the release fails if it does
+not, since the in-app update check compares that constant against the latest release.

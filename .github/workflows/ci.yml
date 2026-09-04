@@ -78,6 +78,21 @@ jobs:
         shell: pwsh
         run: .\build\Generate-PresetDocs.ps1 -Check
 
+      # Build the exe on every push too, so a ps2exe failure surfaces here rather than part-way
+      # through a release that has already created a tag.
+      - name: Build the executable
+        shell: pwsh
+        run: .\build\Build-Exe.ps1
+
+      - name: Verify the executable was produced
+        shell: pwsh
+        run: |
+          $exe = 'dist\Winnow.exe'
+          if (-not (Test-Path $exe)) { throw 'ps2exe produced no executable' }
+          $item = Get-Item $exe
+          if ($item.Length -lt 20KB) { throw "Executable is implausibly small ($($item.Length) bytes)" }
+          Write-Host "Built $($item.Name), $([math]::Round($item.Length/1KB,1)) KB, version $($item.VersionInfo.FileVersion)"
+
   # The C# rewrite is retained but not shipped (see README > Development). Still built and tested
   # so it does not rot while it sits there, in case signing ever becomes available and it can be
   # picked back up.

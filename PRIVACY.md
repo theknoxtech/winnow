@@ -31,14 +31,18 @@ few dozen lines — short enough to read in a minute rather than believe on asse
 ## Provenance
 
 Releases are published by the [`release.yml`](.github/workflows/release.yml) GitHub Actions
-workflow, triggered by a version tag, directly from this repository. The workflow publishes
-`Winnow.ps1` exactly as it exists in the tagged commit — there is no build step that could
-transform it, and no separate release branch.
+workflow, triggered by a version tag, directly from this repository. There is no separate release
+branch and no out-of-band build.
 
-Every release publishes a SHA-256 alongside the script, in both the release notes and a
-`Winnow.ps1.sha256` asset. Since the script is unsigned, that hash is what confirms the file you
-downloaded is the file that was published. See
-[README § Verifying a download](README.md#verifying-a-download).
+Two files are published. `Winnow.ps1` is the script exactly as it exists in the tagged commit —
+nothing transforms it. `Winnow.exe` is that same script compiled by
+[ps2exe](https://github.com/MScholtes/PS2EXE), which embeds it and hosts the PowerShell runtime;
+the exe is therefore the same application as the script by construction, and the script is
+readable if you would rather audit it than trust the binary.
+
+Every release publishes a SHA-256 for each file, in both the release notes and `.sha256` assets.
+Since neither is signed, those hashes are what confirm the file you downloaded is the file that
+was published. See [README § Verifying a download](README.md#verifying-a-download).
 
 ## Code signing
 

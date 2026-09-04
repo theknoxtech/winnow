@@ -15,26 +15,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # The shipped artifact is the script itself - there is nothing to compile. What still needs
-      # checking is that it parses, and that the version constant the in-app update check reads
-      # actually matches the tag being released.
+      # There is no compiler to catch a typo in the script, so this is the only thing standing
+      # between a bad edit and a broken release. Also checks the version constant the in-app
+      # update check reads actually matches the tag being released.
       - name: Validate the script
+        id: validate
         shell: pwsh
         run: |
-          $script = 'Winnow.ps1'
-          if (-not (Test-Path $script)) { throw "$script not found" }
-
           $errors = $null
           [void][System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $script).Path, [ref]$null, [ref]$errors)
+              (Resolve-Path .\Winnow.ps1).Path, [ref]$null, [ref]$errors)
           if ($errors -and $errors.Count) {
               $errors | ForEach-Object { Write-Host "  line $($_.Extent.StartLineNumber): $($_.Message)" }
-              throw "$script has $($errors.Count) parse error(s)"
+              throw "Winnow.ps1 has $($errors.Count) parse error(s)"
           }
-          Write-Host "$script parses clean"
+          Write-Host 'Winnow.ps1 parses clean'
 
           $version = ([regex]::Match(
-              (Get-Content $script -Raw),
+              (Get-Content .\Winnow.ps1 -Raw),
               "\`$script:AppVersion\s*=\s*'([^']+)'")).Groups[1].Value
           $expected = "${{ github.ref_name }}" -replace '^v', ''
 
@@ -42,26 +40,53 @@ jobs:
             throw "Version mismatch: the script reports '$version', the tag is '$expected'. The in-app update check compares that constant against the latest release, so a mismatch would make this release fail to recognise itself as current."
           }
           Write-Host "Version: $version"
+          "version=$version" >> $env:GITHUB_OUTPUT
 
-      # The script is unsigned, so the SHA-256 is what stands in for a publisher signature: it
-      # lets anyone verify the download, and gives a customer's security team a value to write an
+      - name: Build the executable
+        shell: pwsh
+        run: .\build\Build-Exe.ps1 -Version "${{ steps.validate.outputs.version }}"
+
+      - name: Verify the executable
+        shell: pwsh
+        run: |
+          $exe = 'dist\Winnow.exe'
+          if (-not (Test-Path $exe)) { throw 'Build produced no executable' }
+
+          $stamped  = (Get-Item $exe).VersionInfo.FileVersion
+          $expected = "${{ steps.validate.outputs.version }}"
+          if (-not $stamped.StartsWith($expected)) {
+            throw "The exe reports version '$stamped', expected '$expected'."
+          }
+          Write-Host "Stamped: $stamped"
+
+      # Both artifacts are unsigned, so these hashes are what stand in for a publisher signature:
+      # they let anyone verify a download, and give a customer's security team a value to write an
       # AppLocker or WDAC hash rule against.
       - name: Compute SHA-256
         id: hash
         shell: pwsh
         run: |
-          $hash = (Get-FileHash 'Winnow.ps1' -Algorithm SHA256).Hash.ToLower()
-          "$hash *Winnow.ps1" | Set-Content 'Winnow.ps1.sha256' -NoNewline -Encoding ascii
-          "sha256=$hash" >> $env:GITHUB_OUTPUT
-          Write-Host "SHA-256: $hash"
+          $exeHash = (Get-FileHash 'dist\Winnow.exe' -Algorithm SHA256).Hash.ToLower()
+          $ps1Hash = (Get-FileHash 'Winnow.ps1'      -Algorithm SHA256).Hash.ToLower()
+
+          "$exeHash *Winnow.exe" | Set-Content 'dist\Winnow.exe.sha256' -NoNewline -Encoding ascii
+          "$ps1Hash *Winnow.ps1" | Set-Content 'Winnow.ps1.sha256'      -NoNewline -Encoding ascii
+
+          "exe=$exeHash" >> $env:GITHUB_OUTPUT
+          "ps1=$ps1Hash" >> $env:GITHUB_OUTPUT
+          Write-Host "Winnow.exe: $exeHash"
+          Write-Host "Winnow.ps1: $ps1Hash"
 
       - name: Create GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA256: ${{ steps.hash.outputs.sha256 }}
+          EXE_SHA: ${{ steps.hash.outputs.exe }}
+          PS1_SHA: ${{ steps.hash.outputs.ps1 }}
         run: |
           gh release create "${{ github.ref_name }}" `
+            "dist/Winnow.exe" `
+            "dist/Winnow.exe.sha256" `
             "Winnow.ps1" `
             "Winnow.ps1.sha256" `
             --title "${{ github.ref_name }}" `
@@ -76,51 +101,50 @@ jobs:
           # double-quoted here-string means escaping every one of them, which is unreadable and
           # easy to get subtly wrong.
           $fence = [string][char]0x60 * 3
-          $sha   = $env:SHA256
 
-          $running = @(
-            # Two blank lines, not one: '---' directly beneath a line of text is a setext
-            # heading in markdown, which would silently reformat the last changelog entry
+          $body = @(
+            # Two blank lines, not one: '---' directly beneath a line of text is a setext heading
+            # in markdown, which would silently reformat the last changelog entry into a heading
             # instead of drawing a rule.
             ''
             ''
             '---'
             ''
-            '### Running it'
+            '### Which file do I want?'
+            ''
+            '**`Winnow.exe`** - double-click and go. This is the one most people want.'
+            ''
+            '**`Winnow.ps1`** - the same application as a script, and the fallback if the exe is ever'
+            'quarantined. Both are unsigned, and Windows Defender has flagged unsigned executables from'
+            'this project before (`Trojan:Win32/Wacatac.*!ml`, a machine-learning verdict rather than a'
+            'signature match). That classifier applies to PE binaries and cannot apply to a script, so if'
+            'the exe is blocked on a machine, the script will still run:'
             ''
             ($fence + 'powershell')
             'powershell.exe -STA -ExecutionPolicy Bypass -File .\Winnow.ps1'
             $fence
             ''
             '`-ExecutionPolicy Bypass` is needed because a script downloaded through a browser carries a'
-            'Mark-of-the-Web tag, and the default `RemoteSigned` policy refuses to run it. It applies to that'
-            'one invocation only and changes no machine-wide setting - `Unblock-File .\Winnow.ps1` once is the'
-            'alternative. `-STA` is required for WinForms.'
-          ) -join "`n"
-
-          $verify = @(
-            ''
+            'Mark-of-the-Web tag that the default `RemoteSigned` policy refuses to run. It applies to that'
+            'one invocation and changes no machine-wide setting.'
             ''
             '---'
             ''
-            '### Verifying this download'
+            '### Verifying these downloads'
             ''
-            'Winnow.ps1 is unsigned, so this hash is what stands in for a publisher signature.'
-            'Check it before running the file on a customer machine:'
+            'Both files are unsigned, so these hashes are what stand in for a publisher signature.'
+            'Check before running either on a customer machine:'
             ''
             ($fence + 'powershell')
-            ("(Get-FileHash Winnow.ps1 -Algorithm SHA256).Hash -eq '" + $sha + "'")
+            ("(Get-FileHash Winnow.exe -Algorithm SHA256).Hash -eq '" + $env:EXE_SHA + "'")
+            ("(Get-FileHash Winnow.ps1 -Algorithm SHA256).Hash -eq '" + $env:PS1_SHA + "'")
             $fence
             ''
-            'SHA-256:'
-            ''
-            $fence
-            $sha
-            $fence
-            ''
-            'Being a text file, it can also simply be read - it is one self-contained script with no'
-            'obfuscation and no downloaded payloads.'
+            '| File | SHA-256 |'
+            '|---|---|'
+            ('| `Winnow.exe` | `' + $env:EXE_SHA + '` |')
+            ('| `Winnow.ps1` | `' + $env:PS1_SHA + '` |')
           ) -join "`n"
 
-          ($notes + $running + $verify) | Set-Content release-notes.md -Encoding utf8
+          ($notes + $body) | Set-Content release-notes.md -Encoding utf8
           gh release edit "${{ github.ref_name }}" --notes-file release-notes.md
