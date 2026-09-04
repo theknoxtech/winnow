@@ -167,9 +167,199 @@ $script:GroupColors = @{
     'Active Directory' = [System.Drawing.Color]::FromArgb(225,225,235)
     'Hardware'       = [System.Drawing.Color]::FromArgb(210,240,240)
 }
+
+# Captured before any overrides are applied. Reloading presets.json always starts again from this
+# clean set, so repeatedly reloading cannot stack overrides on top of already-overridden presets.
+$script:BuiltInPresets = @($script:Presets)
+$script:PresetWarning  = ''
 #endregion
 
 #region 3 - Helper Functions
+
+# --- Preset overrides --------------------------------------------------------
+# Presets live inside the script, and therefore inside the exe, so once compiled they cannot be
+# edited in place. An optional presets.json beside the executable is what makes them editable
+# without a rebuild: an external file is readable whatever is compiled in, so this works
+# identically for Winnow.exe and Winnow.ps1.
+
+function Get-AppDirectory {
+    # A ps2exe build is its own process, so the executable's own path is the right answer. Run as
+    # a .ps1 the process is powershell.exe, and $PSScriptRoot is what we want instead.
+    try {
+        $procPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        $leaf     = [System.IO.Path]::GetFileNameWithoutExtension($procPath)
+        if ($leaf -notmatch '^(powershell|pwsh|powershell_ise)$') {
+            return [System.IO.Path]::GetDirectoryName($procPath)
+        }
+    } catch { }
+
+    if ($PSScriptRoot) { return $PSScriptRoot }
+    return (Get-Location).Path
+}
+
+$script:PresetFilePath = Join-Path (Get-AppDirectory) 'presets.json'
+
+# Maps the lower-cased JSON field names to the PascalCase keys the preset hashtables use.
+$script:PresetFieldMap = @{
+    group        = 'Group'
+    label        = 'Label'
+    description  = 'Description'
+    logname      = 'LogName'
+    id           = 'Id'
+    logname2     = 'LogName2'
+    id2          = 'Id2'
+    providername = 'ProviderName'
+    messagefilter = 'MessageFilter'
+}
+
+function Get-JsonFieldTable {
+    # JSON field names are case-sensitive to look up on a PSCustomObject, which would make
+    # "logName" and "logname" behave differently in a hand-edited file. Flattening to a
+    # lower-cased hashtable first means the user's capitalisation does not matter.
+    param([Parameter(Mandatory)] $Object)
+
+    $table = @{}
+    foreach ($prop in $Object.PSObject.Properties) {
+        $table[$prop.Name.ToLowerInvariant()] = $prop.Value
+    }
+    return $table
+}
+
+function Read-PresetOverrideEntry {
+    # Returns the entries from presets.json, or $null with $script:PresetWarning set. A typo in
+    # that file should cost the user their overrides, not the whole application.
+    if (-not (Test-Path $script:PresetFilePath)) { return $null }
+
+    try {
+        $raw = Get-Content $script:PresetFilePath -Raw -ErrorAction Stop
+        if (-not $raw -or -not $raw.Trim()) { return $null }
+        $doc = $raw | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        $reason = ($_.Exception.Message -split "`n")[0]
+        $script:PresetWarning = "presets.json could not be read ($reason) - using built-in presets."
+        return $null
+    }
+
+    $fields = Get-JsonFieldTable -Object $doc
+    if (-not $fields.ContainsKey('presets')) {
+        $script:PresetWarning = 'presets.json has no "presets" array - using built-in presets.'
+        return $null
+    }
+    return @($fields['presets'])
+}
+
+function ConvertTo-Preset {
+    # Builds one preset from an override entry. Starting from $Existing is what lets an entry
+    # name only the fields it changes, so adding an Event ID does not mean restating the preset.
+    param(
+        [hashtable] $Fields,
+        $Existing
+    )
+
+    $preset = [ordered]@{}
+    if ($Existing) {
+        foreach ($key in $Existing.Keys) { $preset[$key] = $Existing[$key] }
+    }
+
+    foreach ($jsonName in $Fields.Keys) {
+        if (-not $script:PresetFieldMap.ContainsKey($jsonName)) { continue }
+        $key   = $script:PresetFieldMap[$jsonName]
+        $value = $Fields[$jsonName]
+
+        # JSON numbers arrive as Int64, and the event log filter hashtable wants Int32.
+        if ($key -eq 'Id' -or $key -eq 'Id2') { $value = @($value | ForEach-Object { [int]$_ }) }
+        elseif ($key -eq 'ProviderName')      { $value = @($value) }
+
+        $preset[$key] = $value
+    }
+
+    if (-not $preset.Contains('Group') -or -not $preset['Group']) { $preset['Group'] = 'Custom' }
+    if (-not $preset.Contains('Description'))                     { $preset['Description'] = '' }
+    return $preset
+}
+
+function Merge-PresetEntry {
+    # Applies one presets.json entry to the working list, in place. A label matching an existing
+    # preset changes it, an unrecognised label adds one, and "disabled": true removes one.
+    param(
+        [Parameter(Mandatory)] [System.Collections.Generic.List[object]] $Presets,
+        [Parameter(Mandatory)] [hashtable] $Fields
+    )
+
+    $label = $Fields['label']
+    if (-not $label) { return }
+
+    $index = -1
+    for ($i = 0; $i -lt $Presets.Count; $i++) {
+        if ($Presets[$i]['Label'] -eq $label) { $index = $i; break }
+    }
+
+    if ($Fields.ContainsKey('disabled') -and $Fields['disabled']) {
+        if ($index -ge 0) { $Presets.RemoveAt($index) }
+        return
+    }
+
+    $existing = if ($index -ge 0) { $Presets[$index] } else { $null }
+    $preset   = ConvertTo-Preset -Fields $Fields -Existing $existing
+
+    if (-not $preset.Contains('LogName') -or -not $preset['LogName']) {
+        $script:PresetWarning = "Preset '$label' in presets.json has no logName - skipped."
+        return
+    }
+
+    if ($index -ge 0) { $Presets[$index] = $preset } else { $null = $Presets.Add($preset) }
+}
+
+function Import-PresetOverrides {
+    # Merges presets.json over the built-in set. Always restarts from the built-ins so that
+    # reloading repeatedly cannot stack overrides on top of already-overridden presets.
+    $script:PresetWarning = ''
+    $script:Presets       = @($script:BuiltInPresets)
+
+    $entries = Read-PresetOverrideEntry
+    if (-not $entries) { return }
+
+    $merged = [System.Collections.Generic.List[object]]::new()
+    foreach ($preset in $script:Presets) { $null = $merged.Add($preset) }
+
+    foreach ($entry in $entries) {
+        if ($null -eq $entry) { continue }
+        Merge-PresetEntry -Presets $merged -Fields (Get-JsonFieldTable -Object $entry)
+    }
+
+    $script:Presets = @($merged)
+}
+
+function New-PresetTemplateFile {
+    # The examples sit outside the "presets" array on purpose, so creating this file changes
+    # nothing until someone deliberately moves one in. JSON has no comments, hence the _ keys.
+    $template = @'
+{
+  "_comment": "Overrides for Winnow's built-in presets. Match a built-in by \"label\" to change it, listing only the fields you want to change. An unrecognised \"label\" adds a new preset. \"disabled\": true hides one. Nothing under _examples takes effect - move an entry into \"presets\" to use it.",
+
+  "_examples": [
+    { "label": "Logon Events", "id": [4624, 4625, 4634, 4647, 4648] },
+
+    { "label": "Print Jobs", "disabled": true },
+
+    {
+      "group": "Custom",
+      "label": "LOB App Errors",
+      "logName": "Application",
+      "id": [4001, 4002],
+      "providerName": ["AcmeLOB"],
+      "description": "Errors from our line-of-business application"
+    }
+  ],
+
+  "presets": []
+}
+'@
+    Set-Content -Path $script:PresetFilePath -Value $template -Encoding UTF8
+}
+
+# Applied at startup; the Presets... button re-runs it after an edit.
+Import-PresetOverrides
 
 function Test-ForUpdate {
     # Never let this interrupt the user - offline machines, outbound-blocked networks, and
@@ -342,38 +532,43 @@ function Set-ClipboardTextSafe {
     }
 }
 
-function Invoke-Export {
-    param([object[]]$Results)
+function Get-ExportPath {
+    # Resolves where a CSV export should be written, or $null if the user cancelled.
+    #
+    # On a Backstage desktop the shell save dialog is skipped outright: common file dialogs depend
+    # on the shell, which is not reliably available on an alternate desktop running as SYSTEM, so
+    # it can fail or hang rather than appear. A fixed path is also more useful there, because the
+    # file gets retrieved over ScreenConnect file transfer regardless.
+    param([Parameter(Mandatory)] [string] $FileName)
 
-    $fileName     = "Winnow_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
-    $path         = $null
-    $usedFallback = $false
-
-    # On a Backstage desktop the shell save dialog is skipped outright. Common file dialogs depend
-    # on the shell, which is not reliably available on an alternate desktop running as SYSTEM - the
-    # dialog can fail or hang rather than appear. A fixed path is also the more useful behaviour
-    # there, because the file gets retrieved over ScreenConnect file transfer regardless.
     if (-not $script:IsBackstage) {
         try {
-            $sfd = New-Object System.Windows.Forms.SaveFileDialog
-            $sfd.Filter   = 'CSV Files (*.csv)|*.csv|All Files (*.*)|*.*'
-            $sfd.FileName = $fileName
-            if ($sfd.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
-            $path = $sfd.FileName
+            $dialog          = New-Object System.Windows.Forms.SaveFileDialog
+            $dialog.Filter   = 'CSV Files (*.csv)|*.csv|All Files (*.*)|*.*'
+            $dialog.FileName = $FileName
+            if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+            return $dialog.FileName
         } catch {
-            $path = $null   # dialog unavailable after all; fall through to the fixed path
+            # Dialog unavailable after all - fall through to the fixed path rather than give up.
         }
     }
 
-    try {
-        if (-not $path) {
-            if (-not (Test-Path $script:FallbackExportDir)) {
-                $null = New-Item -ItemType Directory -Path $script:FallbackExportDir -Force
-            }
-            $path         = Join-Path $script:FallbackExportDir $fileName
-            $usedFallback = $true
-        }
+    if (-not (Test-Path $script:FallbackExportDir)) {
+        $null = New-Item -ItemType Directory -Path $script:FallbackExportDir -Force
+    }
+    return (Join-Path $script:FallbackExportDir $FileName)
+}
 
+function Invoke-Export {
+    param([object[]] $Results)
+
+    $fileName = "Winnow_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+    $path     = Get-ExportPath -FileName $fileName
+    if (-not $path) { return }
+
+    $usedFallback = $path.StartsWith($script:FallbackExportDir, [StringComparison]::OrdinalIgnoreCase)
+
+    try {
         $Results | Select-Object TimeCreated, LevelDisplayName, ProviderName, Id, Message |
             Export-Csv -Path $path -NoTypeInformation -Encoding UTF8
 
@@ -386,14 +581,12 @@ function Invoke-Export {
         }
 
         [System.Windows.Forms.MessageBox]::Show(
-            $message,
-            'Export Complete',
+            $message, 'Export Complete',
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Information)
     } catch {
         [System.Windows.Forms.MessageBox]::Show(
-            "Export failed:`n$($_.Exception.Message)",
-            'Export Failed',
+            "Export failed:`n$($_.Exception.Message)", 'Export Failed',
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Error)
     }
@@ -597,7 +790,20 @@ $btnExport.Text     = 'Export CSV'
 $btnExport.Width    = 90
 $btnExport.Height   = 26
 $btnExport.Enabled  = $false
-$btnExport.Margin   = New-Object System.Windows.Forms.Padding(0,2,0,0)
+$btnExport.Margin   = New-Object System.Windows.Forms.Padding(0,2,6,0)
+
+$btnPresets         = New-Object System.Windows.Forms.Button
+$btnPresets.Text    = 'Presets...'
+$btnPresets.Width   = 80
+$btnPresets.Height  = 26
+$btnPresets.Margin  = New-Object System.Windows.Forms.Padding(0,2,0,0)
+
+# Descriptions are long enough to be worth a tooltip rather than crowding the button face.
+$toolTip             = New-Object System.Windows.Forms.ToolTip
+$toolTip.AutoPopDelay = 20000
+$toolTip.InitialDelay = 400
+$toolTip.ReshowDelay  = 200
+$toolTip.SetToolTip($btnPresets, "Edit presets.json to add, change or hide presets")
 
 foreach ($pair in @(
     @((New-Label 'Keyword:'), $txtKeyword)
@@ -606,6 +812,7 @@ foreach ($pair in @(
     @($btnSearch)
     @($btnClear)
     @($btnExport)
+    @($btnPresets)
 )) { foreach ($ctrl in $pair) { $filterRow2.Controls.Add($ctrl) } }
 
 # Row 3: Application search
@@ -675,32 +882,67 @@ $lblPresets.Font    = New-Object System.Drawing.Font('Segoe UI', 9, [System.Draw
 $lblPresets.Margin  = New-Object System.Windows.Forms.Padding(0,5,8,0)
 $pnlPresets.Controls.Add($lblPresets)
 
-foreach ($preset in $script:Presets) {
-    $p      = $preset
-    $grpClr = if ($script:GroupColors.ContainsKey($p.Group)) { $script:GroupColors[$p.Group] } else { [System.Drawing.SystemColors]::Control }
-    $btn                = New-Object System.Windows.Forms.Button
-    $btn.Text           = $p.Label
-    $btn.AutoSize       = $true
-    $btn.FlatStyle      = 'Flat'
-    $btn.BackColor      = $grpClr
-    $btn.FlatAppearance.BorderColor = [System.Drawing.Color]::Silver
-    $btn.Margin         = New-Object System.Windows.Forms.Padding(2,3,2,3)
-    $btn.Tag            = $p
-    $btn.Add_MouseEnter({ $this.BackColor = [System.Drawing.Color]::FromArgb(180,210,255) })
-    $btn.Add_MouseLeave({
-        $d = $this.Tag
-        $c = if ($script:GroupColors.ContainsKey($d.Group)) { $script:GroupColors[$d.Group] } else { [System.Drawing.SystemColors]::Control }
-        $this.BackColor = $c
+function New-PresetButton {
+    # One quick-filter button. Split out so Update-PresetButtons stays readable and so the hover
+    # colours and click handler are defined in exactly one place.
+    #
+    # Over the 30-line guideline deliberately: this is a single object being configured, and the
+    # three event handlers only make sense attached to the button they belong to. Splitting it
+    # would mean passing the half-built control between functions for no gain in clarity.
+    param([Parameter(Mandatory)] $Preset)
+
+    $colour = if ($script:GroupColors.ContainsKey($Preset.Group)) {
+        $script:GroupColors[$Preset.Group]
+    } else {
+        [System.Drawing.SystemColors]::Control
+    }
+
+    $button                = New-Object System.Windows.Forms.Button
+    $button.Text           = $Preset.Label
+    $button.AutoSize       = $true
+    $button.FlatStyle      = 'Flat'
+    $button.BackColor      = $colour
+    $button.FlatAppearance.BorderColor = [System.Drawing.Color]::Silver
+    $button.Margin         = New-Object System.Windows.Forms.Padding(2,3,2,3)
+    $button.Tag            = $Preset
+    if ($Preset.Description) { $toolTip.SetToolTip($button, $Preset.Description) }
+
+    $button.Add_MouseEnter({ $this.BackColor = [System.Drawing.Color]::FromArgb(180,210,255) })
+    $button.Add_MouseLeave({
+        $data = $this.Tag
+        $this.BackColor = if ($script:GroupColors.ContainsKey($data.Group)) {
+            $script:GroupColors[$data.Group]
+        } else {
+            [System.Drawing.SystemColors]::Control
+        }
     }.GetNewClosure())
-    $btn.Add_Click({
-        param($s, $e)
-        $data = $s.Tag
+    $button.Add_Click({
+        param($sender, $eventArgs)
+        $data = $sender.Tag
         $cboLogSource.Text = $data.LogName
         $txtEventId.Text   = ''
         Invoke-PresetSearch -Preset $data
     }.GetNewClosure())
-    $pnlPresets.Controls.Add($btn)
+
+    return $button
 }
+
+function Update-PresetButtons {
+    # Rebuilt rather than created once, so editing presets.json can take effect without
+    # restarting. Only buttons are removed - the "Quick Filters:" label stays put.
+    $pnlPresets.SuspendLayout()
+    for ($i = $pnlPresets.Controls.Count - 1; $i -ge 0; $i--) {
+        if ($pnlPresets.Controls[$i] -is [System.Windows.Forms.Button]) {
+            $pnlPresets.Controls.RemoveAt($i)
+        }
+    }
+    foreach ($preset in $script:Presets) {
+        $pnlPresets.Controls.Add((New-PresetButton -Preset $preset))
+    }
+    $pnlPresets.ResumeLayout()
+}
+
+Update-PresetButtons
 $rootTable.Controls.Add($pnlPresets, 0, 1)
 
 # --- SplitContainer (results + detail) ---
@@ -1134,6 +1376,54 @@ $btnExport.Add_Click({
     if ($script:currentResults) { Invoke-Export -Results $script:currentResults }
 })
 
+$btnPresets.Add_Click({
+    if (-not (Test-Path $script:PresetFilePath)) {
+        try {
+            New-PresetTemplateFile
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Could not create the preset file:`n$($script:PresetFilePath)`n`n$($_.Exception.Message)",
+                'Presets',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error)
+            return
+        }
+    }
+
+    # Notepad is skipped on a Backstage desktop: it would open on a desktop nobody is looking at,
+    # which reads as the button having done nothing at all.
+    $opened = $false
+    if (-not $script:IsBackstage) {
+        try {
+            Start-Process notepad.exe -ArgumentList "`"$($script:PresetFilePath)`""
+            $opened = $true
+        } catch { }
+    }
+
+    $message = "Preset overrides:`n$($script:PresetFilePath)"
+    if ($opened) {
+        $message += "`n`nOpened in Notepad. Save your changes, then click OK to reload."
+    } else {
+        if (Set-ClipboardTextSafe $script:PresetFilePath) {
+            $message += "`n`nThe path has been copied to the clipboard."
+        }
+        $message += "`n`nEdit the file, then click OK to reload."
+    }
+
+    [System.Windows.Forms.MessageBox]::Show(
+        $message, 'Presets',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+
+    Import-PresetOverrides
+    Update-PresetButtons
+    $lblStatus.Text = if ($script:PresetWarning) {
+        $script:PresetWarning
+    } else {
+        "Presets reloaded - $($script:Presets.Count) available"
+    }
+})
+
 $dgv.Add_SelectionChanged({
     if ($dgv.SelectedRows.Count -eq 0) { return }
     $item = $dgv.SelectedRows[0].DataBoundItem
@@ -1195,6 +1485,8 @@ $updateTimer.Add_Tick({
 
 $mainForm.Add_Shown({
     $cboLogSource.Focus()
+    # Surfaced here rather than at load: presets are merged before the status bar exists.
+    if ($script:PresetWarning) { $lblStatus.Text = $script:PresetWarning }
     $updateTimer.Start()
 })
 [System.Windows.Forms.Application]::Run($mainForm)

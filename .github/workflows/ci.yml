@@ -72,6 +72,12 @@ jobs:
           }
           Write-Host "$($presets.Count) presets validated"
 
+      # The presets.json override merge is the only non-trivial logic in the shipped script, and
+      # there is no compiler to catch a mistake in it.
+      - name: Test preset overrides
+        shell: pwsh
+        run: .\tests\Test-PresetOverrides.ps1
+
       # The preset reference in the README is generated from the script. Failing here rather than
       # letting it drift is the point - the hand-maintained version did drift, once.
       - name: Check the preset reference is current
