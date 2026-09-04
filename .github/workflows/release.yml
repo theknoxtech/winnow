@@ -7,88 +7,51 @@ on:
 
 permissions:
   contents: write
-  # Needed only for the conditional Azure OIDC login below - unused, and harmless, on every
-  # release until ARTIFACT_SIGNING_ACCOUNT is configured.
-  id-token: write
 
 jobs:
-  build-and-release:
+  release:
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: '8.0.x'
-
-      # The projects target .NET Framework 4.8 but build with the .NET SDK alone - UseWPF works
-      # for net48, so no Visual Studio or standalone MSBuild install is needed here.
-      - name: Build and test
-        shell: pwsh
-        run: .\build\publish.ps1 -Version "${{ github.ref_name }}"
-
-      - name: Verify the exe is standalone
+      # The shipped artifact is the script itself - there is nothing to compile. What still needs
+      # checking is that it parses, and that the version constant the in-app update check reads
+      # actually matches the tag being released.
+      - name: Validate the script
         shell: pwsh
         run: |
-          $exe = "dist/Winnow.exe"
-          if (-not (Test-Path $exe)) { throw "Build produced no executable" }
+          $script = 'Winnow.ps1'
+          if (-not (Test-Path $script)) { throw "$script not found" }
 
-          $version = (Get-Item $exe).VersionInfo.ProductVersion
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script).Path, [ref]$null, [ref]$errors)
+          if ($errors -and $errors.Count) {
+              $errors | ForEach-Object { Write-Host "  line $($_.Extent.StartLineNumber): $($_.Message)" }
+              throw "$script has $($errors.Count) parse error(s)"
+          }
+          Write-Host "$script parses clean"
+
+          $version = ([regex]::Match(
+              (Get-Content $script -Raw),
+              "\`$script:AppVersion\s*=\s*'([^']+)'")).Groups[1].Value
           $expected = "${{ github.ref_name }}" -replace '^v', ''
-          if (-not $version.StartsWith($expected)) {
-            throw "Version mismatch: exe reports '$version', tag is '$expected'. The in-app update check compares this against the release tag, so a mismatch would make the new release fail to recognise itself as current."
+
+          if ($version -ne $expected) {
+            throw "Version mismatch: the script reports '$version', the tag is '$expected'. The in-app update check compares that constant against the latest release, so a mismatch would make this release fail to recognise itself as current."
           }
-          Write-Host "Stamped version: $version"
+          Write-Host "Version: $version"
 
-      # Signing is optional and additive. Every step below is skipped, and the exe ships unsigned
-      # exactly as it always has, until ARTIFACT_SIGNING_ACCOUNT is set as a repository variable -
-      # nothing else in this workflow depends on it existing. See README > Code signing for the
-      # full setup (Azure Artifact Signing account, certificate profile, OIDC app registration).
-      - name: Azure login for Artifact Signing
-        if: ${{ vars.ARTIFACT_SIGNING_ACCOUNT != '' }}
-        uses: azure/login@v3.0.2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Sign the executable
-        if: ${{ vars.ARTIFACT_SIGNING_ACCOUNT != '' }}
-        uses: azure/artifact-signing-action@v2.0.0
-        with:
-          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
-          files-folder: ${{ github.workspace }}\dist
-          files-folder-filter: exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-
-      # Fails the build rather than silently shipping something broken - a bad role assignment or
-      # wrong profile name should be caught here, not discovered by whoever downloads the release.
-      - name: Verify the signature
-        if: ${{ vars.ARTIFACT_SIGNING_ACCOUNT != '' }}
-        shell: pwsh
-        run: |
-          $sig = Get-AuthenticodeSignature "dist\Winnow.exe"
-          if ($sig.Status -ne 'Valid') {
-            throw "Signing ran but the resulting signature is '$($sig.Status)', not Valid: $($sig.StatusMessage). Do not ship this - check the certificate profile and role assignment."
-          }
-          Write-Host "Signed by: $($sig.SignerCertificate.Subject)"
-
-      # Computed after the signing steps above (when they run), so the published hash matches
-      # exactly what a downloader receives, signed or not. On an unsigned build this hash is also
-      # what stands in for a publisher signature: it lets anyone verify the download, and gives a
-      # customer's security team a value to write an AppLocker or WDAC hash rule against.
+      # The script is unsigned, so the SHA-256 is what stands in for a publisher signature: it
+      # lets anyone verify the download, and gives a customer's security team a value to write an
+      # AppLocker or WDAC hash rule against.
       - name: Compute SHA-256
         id: hash
         shell: pwsh
         run: |
-          $hash = (Get-FileHash "dist/Winnow.exe" -Algorithm SHA256).Hash.ToLower()
-          "$hash *Winnow.exe" | Set-Content "dist/Winnow.exe.sha256" -NoNewline -Encoding ascii
+          $hash = (Get-FileHash 'Winnow.ps1' -Algorithm SHA256).Hash.ToLower()
+          "$hash *Winnow.ps1" | Set-Content 'Winnow.ps1.sha256' -NoNewline -Encoding ascii
           "sha256=$hash" >> $env:GITHUB_OUTPUT
           Write-Host "SHA-256: $hash"
 
@@ -97,11 +60,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA256: ${{ steps.hash.outputs.sha256 }}
-          SIGNED: ${{ vars.ARTIFACT_SIGNING_ACCOUNT != '' }}
         run: |
           gh release create "${{ github.ref_name }}" `
-            "dist/Winnow.exe" `
-            "dist/Winnow.exe.sha256" `
+            "Winnow.ps1" `
+            "Winnow.ps1.sha256" `
             --title "${{ github.ref_name }}" `
             --generate-notes
 
@@ -114,56 +76,9 @@ jobs:
           # double-quoted here-string means escaping every one of them, which is unreadable and
           # easy to get subtly wrong.
           $fence = [string][char]0x60 * 3
-          $sha = $env:SHA256
-          $signed = $env:SIGNED -eq 'true'
+          $sha   = $env:SHA256
 
-          if ($signed) {
-            # A signature proves who signed it, not that nothing else changed a byte afterward -
-            # still worth pointing at the hash below rather than only saying "trust the signature".
-            $trustSection = @(
-              ''
-              ''
-              '---'
-              ''
-              '### Signed release'
-              ''
-              'Winnow.exe is Authenticode-signed via Azure Artifact Signing. Windows should not show a'
-              'SmartScreen or Defender warning for it. If it still does, verify the SHA-256 below before'
-              'trusting it regardless.'
-            ) -join "`n"
-          } else {
-            # Every unsigned release carries this, not just the one that got flagged: v1.3.0
-            # (Costura) was quarantined as Wacatac.B!ml, and v1.3.1 (ILRepack, after that was
-            # fixed) was independently quarantined on a different machine as Wacatac.C!ml. This is
-            # a cloud ML classifier reacting to "unsigned, low-prevalence binary", not a defect in
-            # a specific build - so it should be expected on any future unsigned release too, and
-            # the warning needs to ship with the release itself, not live only in a README someone
-            # has to think to check.
-            $trustSection = @(
-              ''
-              ''
-              '---'
-              ''
-              '### Windows Defender may flag this file'
-              ''
-              '`Trojan:Win32/Wacatac.B!ml` or `Trojan:Win32/Wacatac.C!ml`, marked Severe, auto-quarantined. This'
-              'is a cloud ML classifier reacting to an unsigned, low-prevalence binary - not a signature match,'
-              'and not indicating anything specific the code does.'
-              ''
-              'Verify the file against the SHA-256 below before assuming this is a false positive rather than'
-              'a compromised build. See'
-              '[README - If Windows Defender flags Winnow.exe](https://github.com/theknoxtech/winnow#if-windows-defender-flags-winnowexe)'
-              'for what to do about it.'
-            ) -join "`n"
-          }
-
-          $hashIntro = if ($signed) {
-            'Winnow.exe is signed, but here is the exact hash if you want to verify the bytes directly.'
-          } else {
-            'Winnow.exe is unsigned, so this hash is what stands in for a publisher signature.'
-          }
-
-          $verify = @(
+          $running = @(
             # Two blank lines, not one: '---' directly beneath a line of text is a setext
             # heading in markdown, which would silently reformat the last changelog entry
             # instead of drawing a rule.
@@ -171,13 +86,30 @@ jobs:
             ''
             '---'
             ''
+            '### Running it'
+            ''
+            ($fence + 'powershell')
+            'powershell.exe -STA -ExecutionPolicy Bypass -File .\Winnow.ps1'
+            $fence
+            ''
+            '`-ExecutionPolicy Bypass` is needed because a script downloaded through a browser carries a'
+            'Mark-of-the-Web tag, and the default `RemoteSigned` policy refuses to run it. It applies to that'
+            'one invocation only and changes no machine-wide setting - `Unblock-File .\Winnow.ps1` once is the'
+            'alternative. `-STA` is required for WinForms.'
+          ) -join "`n"
+
+          $verify = @(
+            ''
+            ''
+            '---'
+            ''
             '### Verifying this download'
             ''
-            $hashIntro
+            'Winnow.ps1 is unsigned, so this hash is what stands in for a publisher signature.'
             'Check it before running the file on a customer machine:'
             ''
             ($fence + 'powershell')
-            ("(Get-FileHash Winnow.exe -Algorithm SHA256).Hash -eq '" + $sha + "'")
+            ("(Get-FileHash Winnow.ps1 -Algorithm SHA256).Hash -eq '" + $sha + "'")
             $fence
             ''
             'SHA-256:'
@@ -185,7 +117,10 @@ jobs:
             $fence
             $sha
             $fence
+            ''
+            'Being a text file, it can also simply be read - it is one self-contained script with no'
+            'obfuscation and no downloaded payloads.'
           ) -join "`n"
 
-          ($notes + $trustSection + $verify) | Set-Content release-notes.md -Encoding utf8
+          ($notes + $running + $verify) | Set-Content release-notes.md -Encoding utf8
           gh release edit "${{ github.ref_name }}" --notes-file release-notes.md

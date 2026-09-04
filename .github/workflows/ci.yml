@@ -1,14 +1,88 @@
 name: CI
 
-# Every push and pull request, so a broken build or a failing test is caught here rather than
-# at release time when a tag has already been pushed.
+# Every push and pull request, so a broken script or a stale reference table is caught here
+# rather than at release time when a tag has already been pushed.
 on:
   push:
     branches: ['**']
   pull_request:
 
 jobs:
-  test:
+  script:
+    name: Winnow.ps1
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Winnow.ps1 is the shipped artifact. There is no compiler to catch a typo in it, so these
+      # checks are the only thing standing between a bad edit and a broken release.
+      - name: Parse
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path .\Winnow.ps1).Path, [ref]$null, [ref]$errors)
+          if ($errors -and $errors.Count) {
+              $errors | ForEach-Object { Write-Host "  line $($_.Extent.StartLineNumber): $($_.Message)" }
+              throw "Winnow.ps1 has $($errors.Count) parse error(s)"
+          }
+          Write-Host "Winnow.ps1 parses clean"
+
+      # Reads the preset array the same way Generate-PresetDocs.ps1 does - through the parser,
+      # evaluating only the data literal. Catches a malformed preset before it ships, which
+      # otherwise surfaces as a button that silently returns nothing.
+      - name: Validate presets
+        shell: pwsh
+        run: |
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path .\Winnow.ps1).Path, [ref]$null, [ref]$null)
+
+          $assignment = $ast.FindAll({
+              param($node)
+              $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+              $node.Left.Extent.Text -eq '$script:Presets'
+          }, $true) | Select-Object -First 1
+
+          if (-not $assignment) { throw 'Could not find the $script:Presets assignment' }
+
+          $presets = Invoke-Expression $assignment.Right.Extent.Text
+          if (-not $presets -or $presets.Count -eq 0) { throw 'The preset array evaluated to nothing' }
+
+          $problems = @()
+          foreach ($p in $presets) {
+              $label = if ($p.Contains('Label')) { $p['Label'] } else { '<no label>' }
+              foreach ($required in 'Group', 'Label', 'LogName', 'Description') {
+                  if (-not $p.Contains($required) -or -not $p[$required]) {
+                      $problems += "'$label' is missing $required"
+                  }
+              }
+              # A second log without its own IDs would silently query the entire log.
+              if ($p.Contains('LogName2') -and -not $p.Contains('Id2')) {
+                  $problems += "'$label' declares LogName2 with no Id2"
+              }
+          }
+
+          $labels = $presets | ForEach-Object { $_['Label'] }
+          $dupes  = $labels | Group-Object | Where-Object Count -gt 1
+          foreach ($d in $dupes) { $problems += "duplicate label '$($d.Name)'" }
+
+          if ($problems) {
+              $problems | ForEach-Object { Write-Host "  $_" }
+              throw "$($problems.Count) preset problem(s)"
+          }
+          Write-Host "$($presets.Count) presets validated"
+
+      # The preset reference in the README is generated from the script. Failing here rather than
+      # letting it drift is the point - the hand-maintained version did drift, once.
+      - name: Check the preset reference is current
+        shell: pwsh
+        run: .\build\Generate-PresetDocs.ps1 -Check
+
+  # The C# rewrite is retained but not shipped (see README > Development). Still built and tested
+  # so it does not rot while it sits there, in case signing ever becomes available and it can be
+  # picked back up.
+  retained-csharp:
+    name: Retained C# build
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -20,13 +94,5 @@ jobs:
       - name: Build
         run: dotnet build --nologo -c Release
 
-      # Includes tests that query this runner's real event log, which is what verifies that every
-      # built-in preset produces XPath Windows actually accepts.
       - name: Test
         run: dotnet test --nologo -c Release -v normal --no-build
-
-      # The preset reference in the README is generated. Failing here rather than letting it drift
-      # is the point - the hand-maintained version in the PowerShell app did drift.
-      - name: Check the preset reference is current
-        shell: pwsh
-        run: .\build\Generate-PresetDocs.ps1 -Check

@@ -4,83 +4,74 @@
 
 **Cut the chaff out of the Windows Event Log.**
 
-A single-file Windows desktop app for triaging Windows Event Logs, with quick-filter presets for
-common IT and security investigations, application-name search, and security-identity search by
-user, host, or IP.
+A single-file PowerShell + WinForms app for triaging Windows Event Logs, with quick-filter presets
+for common IT and security investigations, application-name search, and security-identity search
+by user, host, or IP.
 
 Event Viewer will show you everything. Winnow's job is the opposite: 36 curated presets that go
 straight to the events that explain what actually went wrong on the machine in front of you.
 
-Built for remote support: one `Winnow.exe`, under a megabyte, no installer and no prerequisites. It
-targets .NET Framework 4.8, which ships in-box on Windows 10 1903+, Windows 11, and Server 2019+,
-and it is designed to work correctly inside a **ScreenConnect Backstage** session.
+Built for remote support: one `Winnow.ps1`, no installer, no build step, and no dependency beyond
+Windows PowerShell 5.1, which ships in-box on every supported version of Windows. It is designed
+to work correctly inside a **ScreenConnect Backstage** session.
 
 ![The main window: filter panel, Quick Filters, results grid and detail pane](docs/images/main-window.png)
 
 ## Running
 
-Two ways to get `Winnow.exe`, no installer either way — copy the single file wherever you need it.
-
-**Download it:**
+Download `Winnow.ps1` from [Releases](../../releases) and run it:
 
 ```powershell
-Invoke-WebRequest https://github.com/theknoxtech/winnow/releases/latest/download/Winnow.exe -OutFile Winnow.exe
+powershell.exe -STA -ExecutionPolicy Bypass -File .\Winnow.ps1
 ```
 
-A plain browser download from [Releases](../../releases) works too, but a CLI download like this
-one does not attach a Mark-of-the-Web tag the way a browser's download manager does — and MOTW is
-part of what triggers the SmartScreen/Defender warning covered
-[below](#if-windows-defender-flags-winnowexe). Verified on the machines used to build this
-project; not a guarantee it holds on every configuration, but it's the lower-friction path if
-you'd rather not hit that prompt at all.
+Both switches matter:
 
-**Or build it yourself** — [`.\build\publish.ps1`](#building) needs only the .NET SDK, no Visual
-Studio, and takes about a minute. The published source is exactly what the exe is built from;
-there's nothing to take on faith.
+- **`-ExecutionPolicy Bypass`** — a script downloaded through a browser carries a Mark-of-the-Web
+  tag, and under the common `RemoteSigned` policy Windows refuses to run it (*"not digitally
+  signed. You cannot run this script"*). Bypass applies to that one invocation and changes no
+  machine-wide setting. `Unblock-File .\Winnow.ps1` once is the alternative.
+- **`-STA`** — WinForms needs a single-threaded apartment.
 
-Right-click → *Run as Administrator* if you need the Security log (or any preset that reads it).
+Run PowerShell as Administrator if you need the Security log, or any preset that reads it.
 
-The binary is unsigned, so each release publishes its SHA-256 — worth
-[checking](#verifying-a-download) before you put it on a customer machine. Downloading it
-through a browser can also trip Windows Defender's cloud classifier — see
-[If Windows Defender flags Winnow.exe](#if-windows-defender-flags-winnowexe) if that happens.
+The script is unsigned, so each release publishes its SHA-256 — worth
+[checking](#verifying-a-download) before you put it on a customer machine.
 
-This project uses **[SignPath Foundation](https://signpath.org/)** for free code signing of open
-source projects. An application is in progress — releases are not signed yet, so the note above
-still applies until that changes. See [`SIGNING-POLICY.md`](SIGNING-POLICY.md) for the full policy
-this signing will operate under, including the privacy statement.
+### Why a script and not an .exe
+
+Winnow shipped as a compiled `.exe` up to v1.3.1 and got quarantined by Windows Defender twice,
+as `Trojan:Win32/Wacatac.B!ml` and then `Trojan:Win32/Wacatac.C!ml`. That is a cloud
+machine-learning verdict on *PE binaries* — it reacts to an executable being unsigned, newly
+built and rare, regardless of what the code does. Signing is the real fix for it and is not
+currently available to this project (see [Code signing](#code-signing)).
+
+A `.ps1` is a text script, not a PE binary, so that classifier does not apply to it at all. The
+trade is not "no friction" — it is *different* friction: execution policy blocks a downloaded
+script until you pass `-ExecutionPolicy Bypass` or unblock it. That failure is a clear, reversible
+error message rather than an antivirus alert that deletes the file.
 
 ### In ScreenConnect Backstage
 
-Copy the exe to the machine and run it from the Backstage command prompt:
+Copy `Winnow.ps1` to the machine and run it from the Backstage command prompt:
 
 ```bat
-C:\Windows\Temp\Winnow.exe
+powershell.exe -STA -ExecutionPolicy Bypass -File C:\Windows\Temp\Winnow.ps1
 ```
 
 Backstage runs processes as `NT AUTHORITY\SYSTEM` on a separate desktop, which changes a few
-things. The app detects this and adapts:
+things. The script detects that and adapts:
 
 | | Behaviour in Backstage |
 |---|---|
 | **Security log** | Works with no elevation prompt — the process is already SYSTEM. |
-| **CSV export** | Skips the file dialog (unreliable on an alternate desktop) and writes to `%TEMP%\Winnow\`, then copies the path to the clipboard. Retrieve it with ScreenConnect file transfer. |
-| **Update link** | Copies the release URL instead of launching a browser as SYSTEM. |
-| **Window size** | Sized from the actual desktop, so it fits a 1024×768 Backstage screen. |
+| **CSV export** | Skips the file dialog, which is unreliable on an alternate desktop, and writes to `%TEMP%\Winnow\` instead, copying the path to the clipboard. Retrieve it with ScreenConnect file transfer. |
+| **Update link** | Copies the release URL rather than launching a browser as SYSTEM. |
+| **Window size** | Sized from the actual desktop, so it fits a 1024×768 Backstage screen instead of opening partly off it. |
+| **Preset strip** | Scrolls within a fixed height, so 36 buttons cannot push the results grid off a short screen. |
 
-The status bar shows which mode the app detected, e.g. `SYSTEM · Backstage desktop`, so you can
+The status bar shows which mode it detected, e.g. `SYSTEM - Winsta0\Backstage desktop`, so you can
 tell at a glance which behaviour is in effect.
-
-### Command line
-
-```
-Winnow.exe [--presets <path>] [--trace-bindings]
-
-  --presets <path>   Load preset overrides from the given presets.json.
-                     Defaults to presets.json beside the executable, if present.
-  --trace-bindings   Write WPF data-binding warnings to bindings.log. Diagnostics only.
-  --help             Show usage.
-```
 
 ## Using the app
 
@@ -91,17 +82,22 @@ Winnow.exe [--presets <path>] [--trace-bindings]
 | **Log** | Log to query. Editable — type any log name, not just the listed ones. |
 | **Level** | Any / Critical / Error / Warning / Information / Verbose. |
 | **Event ID** | Comma-separated Event IDs, e.g. `7045,7036`. Blank for all. |
-| **Max Events** | Cap on how many events are pulled back. |
+| **Max Events** | Cap on how many events are pulled back, 100–50,000. |
 | **Keyword** | Substring filter against the event message. Applies on top of a preset or either search below. |
 | **From / To** | Optional date range (tick the box to enable). |
 
-Press **Search**, or Enter, or F5. **Cancel** (or Escape) stops a running query — useful when a
-50,000-event search on a busy server is taking longer than expected.
+Press **Search**, or Enter from any of the filter fields.
+
+The window stops repainting while a large search runs — the query is synchronous, and there is no
+cancel. On a busy server, a 50,000-event search can take a while; prefer a tighter Max Events or a
+date range over waiting it out.
 
 ### Quick Filters
 
-One-click presets, colour-coded by group — see the reference below. Clicking one sets the Log
-field and runs immediately; the Keyword box, if filled in, still applies on top.
+One-click presets, colour-coded by group — see the [reference](#preset-reference) below. Clicking
+one sets the Log field and runs immediately; the Keyword box, if filled in, still applies on top.
+
+![The Quick Filters strip, with presets colour-coded by group](docs/images/quick-filters.png)
 
 ### Application search
 
@@ -123,123 +119,49 @@ or Backstage.
 - Click a row to see its full message in the detail pane.
 - **Filter results** narrows the rows already loaded, across Message, Source and Event ID, without
   re-querying.
-- **Export CSV** writes what the filter currently shows.
+- **Export CSV** writes the full result set of the last search. Note that it exports everything
+  the search returned, not the narrowed view — the **Filter results** box changes what you see,
+  not what gets exported.
 
 ## Presets
 
-Presets are data, not code. The 36 built-in presets are embedded in the exe; an optional
-`presets.json` beside it (or at `--presets <path>`) adds to, changes, or hides them.
+The 36 presets live in the `$script:Presets` array near the top of `Winnow.ps1`. To add, change or
+remove one, edit that array — each entry is a hashtable:
 
-You can edit them two ways: in the app with **Edit Presets…**, or by hand in `presets.json`.
-Both write the same file.
-
-![The Quick Filters strip, with presets colour-coded by group](docs/images/quick-filters.png)
-
-### Editing presets in the app
-
-Click **Edit Presets…** in the toolbar.
-
-![The preset editor, with the preset list on the left and the selected preset's fields on the right](docs/images/preset-editor.png)
-
-The list on the left shows every preset, including ones currently turned off, each labelled
-`built-in` or `custom`. Selecting one opens it on the right.
-
-**1. Edit the fields.** Label and group drive the button; group also picks its colour, and a group
-you invent gets a colour of its own. Description becomes the button's tooltip — worth filling in
-if the preset's Event IDs are shared with unrelated sources, so the next person knows why it is
-scoped the way it is.
-
-**2. Edit the clauses.** Each clause queries one log, with its own Event IDs and providers.
-
-![A clause: log name, Event IDs and providers](docs/images/preset-editor-clauses.png)
-
-Leave **Event IDs** blank to match every event in the log, which is how the Active Directory
-presets work. Use **Providers** when an Event ID is reused across unrelated sources — see the two
-notes below.
-
-**Add Clause** gives a preset a second log. Results from every clause are merged and sorted
-together by time, which is how a preset spans more than one log — `Resource/Memory` and
-`DNS Errors` both do. The [JSON example below](#presetsjson-format) shows the two-clause shape.
-
-**3. Test it.** The **Test** button runs the preset exactly as edited and reports how many events
-it matches on this machine. It is the fastest way to catch a wrong Event ID, and it will tell you
-if the log does not exist here at all rather than just returning nothing.
-
-![The Test button reporting how many events the edited preset matches](docs/images/preset-editor-test.png)
-
-**4. Save.** Writes `presets.json` beside the exe. If that location is not writable — running from
-a temp copy or a read-only share — you are asked where to put it instead.
-
-Only the differences are written, so the file stays small and reviewable in git, and a later fix
-to a built-in preset still reaches you.
-
-#### Adding your own
-
-**Add** creates a new preset, ready to fill in; **Clone** copies the selected one, which is usually
-the faster start. Either way it lands in the `Custom` group by default, and once saved it appears
-in the Quick Filters strip alongside the built-ins with a colour of its own.
-
-![A newly added preset in the editor, ready to be filled in](docs/images/preset-custom.png)
-
-#### Turning a built-in off
-
-**Delete** on a built-in turns it off rather than removing it — the definition is kept, so you can
-re-enable it with the **Enabled** box, and a future fix to that preset is not permanently
-discarded. Delete on a custom preset removes it outright.
-
-#### Sharing a preset set across the team
-
-**Export…** writes the current set to a file; **Import…** merges one in. Keep the exported
-`presets.json` in your IT repo and drop it beside the exe when you push the tool to a machine —
-that is the whole mechanism for a shared team preset set, with no server component involved.
-
-### presets.json format
-
-A preset file only needs the presets it changes — everything else keeps the built-in definition,
-so a later fix to a built-in still reaches you.
-
-```json
-{
-  "presets": [
-    {
-      "id": "custom.our-line-of-business-app",
-      "group": "Custom",
-      "label": "LOB App Errors",
-      "description": "Errors from our line-of-business application",
-      "clauses": [
-        { "logName": "Application", "eventIds": [4001, 4002], "providerNames": ["AcmeLOB"] }
-      ]
-    },
-    { "id": "printing.print-jobs", "disabled": true }
-  ]
+```powershell
+[ordered]@{
+    Group       = 'System Changes'
+    Label       = 'Software Installs'
+    LogName     = 'Application'
+    Id          = @(11707, 1033, 1034)
+    Description = 'MsiInstaller product install/remove'
 }
 ```
 
 | Field | Meaning |
 |---|---|
-| `id` | Stable identity. Matching a built-in `id` **replaces** it; a new `id` **adds** a preset. Do not change an id once it is in use. |
-| `group` | Controls the button colour and grouping. A new group gets its own colour automatically. |
-| `label` | Button text. |
-| `description` | Button tooltip. |
-| `disabled` | `true` hides a built-in preset. The rest of its definition can be omitted. |
-| `clauses` | One or more logs to query. Results are merged and sorted by time. |
-| `clauses[].logName` | Log to query. Required. |
-| `clauses[].eventIds` | Event IDs. Omit or leave empty for every event in the log. |
-| `clauses[].providerNames` | Restricts to specific sources. Important when an Event ID is reused. |
-| `messageFilter` | Substring applied to the message after the query runs. |
+| `Group` | Controls the button's colour and grouping. A new group falls back to the default button colour. |
+| `Label` | Button text. |
+| `Description` | Shown in the preset reference below; describes what the preset is for. |
+| `LogName` | Log to query. Required. |
+| `Id` | Event IDs. Omit for every event in the log — this is how the Active Directory presets work. |
+| `LogName2` / `Id2` | An optional second log, queried and merged with the first. |
+| `ProviderName` | Restricts to specific sources. Important when an Event ID is reused. |
+| `MessageFilter` | Substring applied to the message after the query runs. |
 
-**Why `providerNames` matters:** Windows reuses small Event IDs across unrelated providers in the
+**Why `ProviderName` matters:** Windows reuses small Event IDs across unrelated providers in the
 same log — System-log ID `1` is used by dozens of sources. Without a provider scope, a preset on
 ID 1 returns a flood of unrelated events.
 
-**Why `messageFilter` exists:** some Event IDs are shared with no distinguishing provider at all.
+**Why `MessageFilter` exists:** some Event IDs are shared with no distinguishing provider at all.
 Service Control Manager's 7031/7034 are emitted for *every* service on the machine, and only the
 message text says which one, so the Spooler preset filters on the text.
 
-> Note: a provider name containing an apostrophe cannot be expressed in an event log query — the
-> log implements a subset of XPath with no `concat()`, and XPath has no escape inside a string
-> literal. Such a name is applied as a post-query filter instead, which still gives correct
-> results but reads more of the log to do it.
+After editing presets, regenerate the reference table below so the docs cannot drift:
+
+```powershell
+.\build\Generate-PresetDocs.ps1
+```
 
 ## Preset reference
 
@@ -305,7 +227,7 @@ shown in the "Scoped by" column. Presets without a note filter on log and Event 
 
 | Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
 |---|---|---|---|---|
-| Print Jobs | Microsoft-Windows-PrintService/Operational | 307 | Document printed - job, user, printer, pages |  |
+| Print Jobs | Microsoft-Windows-PrintService/Operational | 307 | Document printed — job, user, printer, pages |  |
 | Print Errors | Microsoft-Windows-PrintService/Operational | 372, 374, 375 | Spooler errors and failed print jobs |  |
 | Spooler Events | System | 7031, 7034 | Print Spooler service crash or restart (IDs 7031/7034 are generic Service Control Manager events shared by every service, filtered here to Spooler by message text) | message contains "Spooler" |
 
@@ -331,177 +253,68 @@ Active Directory presets pull the entire log (bounded by Max Events), because re
 and DNS-server event IDs vary too much to hardcode. On a machine without those logs they show
 "0 records" and say so, rather than erroring.
 
-## Building
+## Verifying a download
 
-Requires the [.NET SDK](https://dotnet.microsoft.com/download) (8.0 or later). Visual Studio is
-not needed — the projects target .NET Framework 4.8 but build with the SDK alone.
-
-```powershell
-.\build\publish.ps1
-```
-
-Runs the tests and produces a single self-contained `dist\Winnow.exe`. Dependencies are
-merged in with [ILRepack](https://github.com/gluck/il-repack), so the exe has no loose DLLs beside it.
+Every release publishes the SHA-256 of `Winnow.ps1`, both in the release notes and as a
+`Winnow.ps1.sha256` asset. The script is unsigned, so this is what confirms you have the file that
+was actually published:
 
 ```powershell
-dotnet test                             # tests only
-.\build\Generate-PresetDocs.ps1         # regenerate the preset reference above
-.\build\Generate-Icon.ps1               # regenerate winnow.ico
+(Get-FileHash Winnow.ps1 -Algorithm SHA256).Hash
 ```
 
-The icon is generated from a script rather than committed as an opaque binary, so it can be
-re-coloured or reshaped later without anyone reverse-engineering it in an image editor.
+Being a text file, it has one advantage a binary does not: you can simply read it. It is a single
+self-contained script with no obfuscation and no downloaded payloads — everything it does is on
+the page.
 
-### Layout
+## Code signing
 
-| Path | Contents |
-|---|---|
-| `src/Winnow.Core` | Query engine, preset model, CSV export, update check, host detection. No UI dependency. |
-| `src/Winnow.App` | WPF views and view models. |
-| `tests/Winnow.Tests` | Unit tests, plus tests that query this machine's real event log. |
-| `legacy/` | The original PowerShell + WinForms version, kept for one release cycle. |
+Winnow is **unsigned**, and there is no signing in the release pipeline.
 
-## Releasing
+Signing certificates are a recurring cost, and since the June 2023 CA/Browser Forum baseline the
+private key must live on FIPS 140-2 Level 2 hardware, so there is no cheap path — a downloadable
+`.pfx` is not an option. Azure Artifact Signing's individual tier requires personal identity
+verification (government ID and a live check). An application to
+[SignPath Foundation](https://signpath.org/), whose free open-source program vets the project
+rather than the maintainer, was not approved.
 
-Push a version tag matching `v*.*.*`. GitHub Actions runs the tests, builds the exe, verifies the
-stamped version matches the tag, and attaches it to a new Release.
+Shipping a script rather than a binary is what makes this tolerable: the PE classifier that
+quarantined the compiled builds does not apply to a `.ps1`, and a reader can audit the source
+directly instead of trusting an opaque executable. What is genuinely lost is that a customer's
+security team cannot write an AppLocker or WDAC *publisher* rule for unsigned code — they need a
+hash rule, which is why every release publishes its SHA-256.
 
-```bash
-git tag v1.3.0
-git push origin v1.3.0
-```
-
-There is no version constant to update — the version comes from the tag and is read back out of
-the assembly at runtime. (The PowerShell version required updating `$script:AppVersion` by hand to
-match the tag, and the release would misreport its own version if you forgot.)
-
-### Code signing, and why there isn't any
-
-Winnow is **unsigned, by choice**. Code signing certificates are a recurring cost, and since the
-June 2023 CA/Browser Forum baseline the private key must live on FIPS 140-2 Level 2 hardware, so
-there is no longer a cheap path — a downloadable `.pfx` is not an option, leaving a cloud signing
-subscription or a hardware token plus a self-hosted build runner.
-
-What that does and does not cost you:
-
-- **SmartScreen is largely moot** for how this tool is meant to be distributed. The "Windows
-  protected your PC" prompt is driven by Mark-of-the-Web, which browsers and mail clients attach
-  to downloads. A file pushed over a ScreenConnect file transfer, or copied from a UNC path,
-  usually carries no MOTW and never triggers it. **Downloading the exe from Releases in a browser
-  is a different story** — see below.
-- **Application control is the real, unconditional loss.** A customer's security team cannot
-  write an AppLocker or WDAC *publisher* rule against an unsigned file. They need a hash rule,
-  which is why every release publishes its SHA-256 (below).
-- **Defender's cloud ML classifier flags unsigned, low-prevalence binaries — repeatedly, and this
-  is not solved.** v1.3.0 was quarantined as `Trojan:Win32/Wacatac.B!ml`. The cause looked
-  packaging-specific: it used [Costura](https://github.com/Fody/Costura), which embeds each
-  dependency as a compressed resource and loads it from memory at run time via `AssemblyResolve` —
-  behaviourally what a packer does. Switching to [ILRepack](https://github.com/gluck/il-repack),
-  which merges the IL at build time into one ordinary assembly with no compressed payloads and no
-  run-time loading, tested clean on the build machine. **v1.3.1 — the ILRepack build — was then
-  independently quarantined on a different machine as `Trojan:Win32/Wacatac.C!ml`**, confirmed by
-  cross-referencing the flagged file's CDN blob GUID against the actual release asset, not a stale
-  v1.3.0 link.
-
-  The honest reading: removing the Costura pattern was a real improvement and worth keeping — it
-  is less packer-like by any static measure, and every download it caught during testing here
-  came back clean — but it was not sufficient on its own. `Wacatac.*!ml` is a cloud model verdict
-  reacting to the whole profile of the file: unsigned, freshly built, near-zero prevalence, and
-  performing operations (`EventLogReader` against the Security log, outbound HTTPS for the update
-  check) that a heuristic has no way to distinguish from reconnaissance or exfiltration short of
-  vouching for the publisher. Signing is what supplies that vouching; nothing about how the
-  assemblies are merged substitutes for it. **This should be expected to recur on future unsigned
-  releases**, and a "scanned clean here" claim from any one machine does not predict the verdict
-  on another — the same v1.3.1 hash was clean on the machine that built it and flagged on the one
-  that downloaded it, which is the cloud model's non-determinism showing directly, not a fluke.
-
-**Signing is wired into the release workflow but not active.** `.github/workflows/release.yml` will
-Authenticode-sign `dist\Winnow.exe` via [Azure Artifact
-Signing](https://azure.microsoft.com/en-us/products/artifact-signing) (formerly Trusted Signing)
-the moment the repository has the following configured — nothing else about the workflow needs to
-change:
-
-- **Secrets:** `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` — from an Entra ID app
-  registration with a GitHub Actions federated credential (OIDC, no stored password).
-- **Variables:** `ARTIFACT_SIGNING_ENDPOINT`, `ARTIFACT_SIGNING_ACCOUNT`, `ARTIFACT_SIGNING_PROFILE`
-  — matching an Azure Artifact Signing account with a completed identity validation and a Public
-  Trust certificate profile, with that app registration granted the **Artifact Signing Certificate
-  Profile Signer** role on it.
-
-Until all of those exist, every release ships exactly as described above — the workflow checks for
-`ARTIFACT_SIGNING_ACCOUNT` and skips signing entirely if it's unset. Once they do, the workflow
-signs the exe, verifies the result is a `Valid` Authenticode signature before publishing anything
-(failing the build otherwise, rather than shipping something quietly broken), and the release notes
-carry a short signed-release note in place of the Defender warning above.
-
-**This path requires personal identity verification for an individual** (government ID, a live
-check) and is not currently being pursued for that reason — the wiring above stays in place,
-dormant and harmless, in case that changes later.
-
-**The path actually being pursued is [SignPath Foundation](https://signpath.org/)'s free signing
-for open-source projects** — no personal ID; the verification is of the project and its source,
-not the maintainer. Winnow meets its stated eligibility criteria (OSI license, already released,
-actively maintained, public repository). [`SIGNING-POLICY.md`](SIGNING-POLICY.md) is the policy
-page their program requires — team roles, build provenance, and a privacy statement grounded in an
-actual audit of the codebase's one network call. **The application has not been submitted yet** —
-that page exists ahead of it, since a ready policy page is itself part of showing the project is
-prepared. CI integration for SignPath doesn't exist yet either; that's deliberately deferred until
-after acceptance, to be built against their actual current submission mechanism rather than
-guessed at now, the same way the Azure integration above was verified against Microsoft's current
-docs rather than assumed.
-
-### If Windows Defender flags Winnow.exe
-
-You may see `Trojan:Win32/Wacatac.B!ml` or `Trojan:Win32/Wacatac.C!ml`, marked Severe, quarantined
-automatically. The `!ml` means this is a cloud machine-learning verdict, not a signature match
-against known malware — it is reacting to the file being unsigned and unfamiliar, not to anything
-specific the code does. See [above](#code-signing-and-why-there-isnt-any) for why, and why it is
-not currently fixable without a paid certificate.
-
-What to do about it:
-
-1. **Verify the file first, always.** Check its SHA-256 against the value published with the
-   [release](../../releases) — see [Verifying a download](#verifying-a-download) — before assuming
-   it's a false positive rather than a compromised build.
-2. **Prefer pushing the file over ScreenConnect, not a browser download from Releases**, where
-   possible. Both incidents so far were logged with `Detection Source: Downloads and attachments`
-   — the path this tool's primary Backstage use case does not go through.
-3. **If it's already been quarantined**, Windows Security → Protection history → find the entry →
-   Actions → *Restore* brings the file back once you've confirmed the hash.
-4. **Consider submitting the flagged release to Microsoft** at
-   [www.microsoft.com/wdsi/filesubmission](https://www.microsoft.com/en-us/wdsi/filesubmission) —
-   submitter type *Software developer*, "I believe this file should not be detected as malware",
-   detection name as shown. This is worth doing for whichever release is *currently* live; it does
-   nothing for a superseded one.
-
-### Verifying a download
-
-Every release publishes the SHA-256 of `Winnow.exe`, both in the release notes and as a
-`Winnow.exe.sha256` asset. Since the binary is unsigned, this is what stands in for a publisher
-signature — check it before running the file on a customer machine:
-
-```powershell
-(Get-FileHash Winnow.exe -Algorithm SHA256).Hash
-```
-
-That value is also what a security team needs to whitelist Winnow with an AppLocker or WDAC hash
-rule. It changes with every release, so the rule has to be updated each time — that is the
-practical cost of shipping unsigned.
-
-#### Whitelisting on machines you manage
-
-For endpoints under your own RMM or GPO, there is a middle path that costs nothing: sign the exe
-with a self-signed certificate and push that root into Trusted Publishers on the machines you
-manage. Publisher rules then work on those endpoints without buying anything. It does nothing for
-machines you do not manage, and deploying a root certificate across a customer estate is a
-decision that should be theirs to agree to explicitly, not something to do quietly.
+[`PRIVACY.md`](PRIVACY.md) covers what the script does with data, how releases are produced, and
+who authorises one.
 
 ## Updates
 
-A few seconds after launch the app checks GitHub for a newer release and, if there is one, shows a
-link in the status bar. It never downloads or installs anything — updating is deliberately your
-decision.
+A few seconds after launch the script checks GitHub for a newer release and, if there is one,
+shows a link in the status bar. It never downloads or installs anything — updating is deliberately
+your decision.
 
 The check fails silently. Offline machines, outbound-blocked networks and GitHub rate limits are
-all normal in this app's environment and none of them are worth interrupting an investigation. It
+all normal in this app's environment, and none of them are worth interrupting an investigation. It
 uses the system proxy, since a SYSTEM process has no per-user proxy configuration.
+
+## Development
+
+| Path | Contents |
+|---|---|
+| `Winnow.ps1` | The application. This is the shipped artifact — there is nothing to build. |
+| `build/Generate-PresetDocs.ps1` | Regenerates the preset reference above, reading the preset array out of `Winnow.ps1` via the PowerShell parser so the two cannot disagree. |
+| `build/Generate-Icon.ps1` | Regenerates `winnow.ico` and `docs/images/icon.png`. |
+| `src/`, `tests/` | A C# / WPF rewrite, retained but **not shipped**. It has a preset editor, a `presets.json` side-car, cancellable searches and a test suite, but it compiles to a `.exe` and was the version Defender quarantined. Kept in case signing ever becomes available. |
+
+### Releasing
+
+Push a version tag matching `v*.*.*`. GitHub Actions verifies the version in the script matches
+the tag, publishes `Winnow.ps1` with its SHA-256, and generates release notes.
+
+```bash
+git tag v2.0.0
+git push origin v2.0.0
+```
+
+`$script:AppVersion` near the top of `Winnow.ps1` must match the tag — CI fails the release if it
+does not, since the in-app update check compares that constant against the latest release.

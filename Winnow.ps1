@@ -1,20 +1,92 @@
 #Requires -Version 5.1
 Set-StrictMode -Version Latest
 
-#region 1 - Assemblies, Visual Styles, Elevation Check
+#region 1 - Assemblies, Visual Styles, Host Environment
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-$currentUser    = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal      = New-Object Security.Principal.WindowsPrincipal($currentUser)
-$script:isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-$script:currentResults = $null
-
-# Bump this alongside the version in each release tag (see README > Releasing a new version).
-$script:AppVersion = '1.2.0'
-$script:UpdateCheckApiUrl = 'https://api.github.com/repos/theknoxtech/PowerShell-Event-Log-Viewer/releases/latest'
+# Bump alongside the version in each release tag (see README > Releasing a new version).
+$script:AppVersion        = '2.0.0'
+$script:UpdateCheckApiUrl = 'https://api.github.com/repos/theknoxtech/winnow/releases/latest'
 $script:LatestReleaseUrl  = $null
+$script:currentResults    = $null
+
+# --- Host environment --------------------------------------------------------
+# ScreenConnect Backstage runs its processes on a separate desktop object, normally as SYSTEM.
+# Detecting that lets the UI route around the things which misbehave there - shell file dialogs,
+# launching a browser - rather than failing in ways that are painful to diagnose over a remote
+# session. Every part of this is best-effort: if detection fails the app treats itself as an
+# ordinary interactive session, which is the safe default because it leaves the elevation
+# warnings switched on.
+try {
+    Add-Type -Namespace Winnow -Name Desktop -ErrorAction Stop -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true)]
+public static extern IntPtr GetThreadDesktop(uint dwThreadId);
+
+[DllImport("kernel32.dll")]
+public static extern uint GetCurrentThreadId();
+
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+public static extern bool GetUserObjectInformation(
+    IntPtr hObj, int nIndex, System.Text.StringBuilder pvInfo, uint nLength, out uint lpnLengthNeeded);
+'@
+} catch {
+    # Already defined (the script was run twice in one session), or Add-Type is unavailable.
+    # Get-CurrentDesktopName checks for the type before using it either way.
+}
+
+function Get-CurrentDesktopName {
+    try {
+        if (-not ('Winnow.Desktop' -as [type])) { return '' }
+        $handle = [Winnow.Desktop]::GetThreadDesktop([Winnow.Desktop]::GetCurrentThreadId())
+        if ($handle -eq [IntPtr]::Zero) { return '' }
+
+        # UOI_NAME = 2. Length is in bytes, so 256 chars is 512.
+        $buffer = New-Object System.Text.StringBuilder 256
+        $needed = 0
+        if ([Winnow.Desktop]::GetUserObjectInformation($handle, 2, $buffer, 512, [ref]$needed)) {
+            return $buffer.ToString()
+        }
+    } catch { }
+    return ''
+}
+
+$script:IsSystemAccount = $false
+$script:isAdmin         = $false
+$script:UserName        = ''
+try {
+    $identity               = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $script:UserName        = $identity.Name
+    $script:IsSystemAccount = $identity.IsSystem
+    $script:isAdmin         = $identity.IsSystem -or
+        (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator)
+} catch { }
+
+$script:DesktopName        = Get-CurrentDesktopName
+$script:IsAlternateDesktop = [bool]$script:DesktopName -and ($script:DesktopName -ne 'Default')
+
+# Either signal alone is enough. A SYSTEM process has the browser and profile problems whatever
+# desktop it sits on; an alternate desktop has the shell-dialog problems whatever account runs it.
+$script:IsBackstage = $script:IsSystemAccount -or $script:IsAlternateDesktop
+
+# Fixed, predictable path so a technician can retrieve an export with ScreenConnect file transfer
+# without having to be told where to look.
+$script:FallbackExportDir = Join-Path ([System.IO.Path]::GetTempPath()) 'Winnow'
+
+function Get-HostDescription {
+    $who = if ($script:IsSystemAccount) { 'SYSTEM' }
+           elseif ($script:UserName)    { $script:UserName }
+           else                         { 'user' }
+    if (-not $script:IsSystemAccount -and $script:isAdmin) { $who += ' (elevated)' }
+
+    if ($script:IsAlternateDesktop) {
+        $where = if ($script:DesktopName) { "$($script:DesktopName) desktop" } else { 'alternate desktop' }
+        return "$who - $where"
+    }
+    return $who
+}
 #endregion
 
 #region 2 - Constants and Presets
@@ -104,8 +176,27 @@ function Test-ForUpdate {
     # GitHub rate limits are all normal here, so any failure is silently ignored.
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $release = Invoke-RestMethod -Uri $script:UpdateCheckApiUrl -TimeoutSec 4 `
-            -Headers @{ 'User-Agent' = 'EventLogViewer' } -ErrorAction Stop
+
+        $params = @{
+            Uri         = $script:UpdateCheckApiUrl
+            TimeoutSec  = 4
+            Headers     = @{ 'User-Agent' = 'Winnow' }
+            ErrorAction = 'Stop'
+        }
+
+        # Running as SYSTEM there is no per-user proxy configuration, so on a proxied network the
+        # check would otherwise silently never fire.
+        try {
+            $proxyUri = [System.Net.WebRequest]::GetSystemWebProxy().GetProxy($script:UpdateCheckApiUrl)
+            if ($proxyUri -and $proxyUri.AbsoluteUri -ne $script:UpdateCheckApiUrl) {
+                $params['Proxy']                     = $proxyUri
+                $params['ProxyUseDefaultCredentials'] = $true
+            }
+        } catch {
+            # No resolvable proxy configuration; a direct connection is fine.
+        }
+
+        $release = Invoke-RestMethod @params
 
         $latestVersion = [version]($release.tag_name -replace '^v', '')
         $currentVersion = [version]$script:AppVersion
@@ -238,19 +329,73 @@ function Get-SecurityEventsByIdentity {
     } | Sort-Object TimeCreated -Descending
 }
 
+function Set-ClipboardTextSafe {
+    param([string]$Text)
+    try {
+        [System.Windows.Forms.Clipboard]::SetText($Text)
+        return $true
+    } catch {
+        # The clipboard is owned per desktop and can be locked by another process; on an alternate
+        # desktop it may not be usable at all. Callers always show the value on screen as well, so
+        # failing quietly here still leaves the user something to work with.
+        return $false
+    }
+}
+
 function Invoke-Export {
     param([object[]]$Results)
-    $sfd = New-Object System.Windows.Forms.SaveFileDialog
-    $sfd.Filter   = 'CSV Files (*.csv)|*.csv|All Files (*.*)|*.*'
-    $sfd.FileName = "EventLog_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
-    if ($sfd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+
+    $fileName     = "Winnow_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+    $path         = $null
+    $usedFallback = $false
+
+    # On a Backstage desktop the shell save dialog is skipped outright. Common file dialogs depend
+    # on the shell, which is not reliably available on an alternate desktop running as SYSTEM - the
+    # dialog can fail or hang rather than appear. A fixed path is also the more useful behaviour
+    # there, because the file gets retrieved over ScreenConnect file transfer regardless.
+    if (-not $script:IsBackstage) {
+        try {
+            $sfd = New-Object System.Windows.Forms.SaveFileDialog
+            $sfd.Filter   = 'CSV Files (*.csv)|*.csv|All Files (*.*)|*.*'
+            $sfd.FileName = $fileName
+            if ($sfd.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+            $path = $sfd.FileName
+        } catch {
+            $path = $null   # dialog unavailable after all; fall through to the fixed path
+        }
+    }
+
+    try {
+        if (-not $path) {
+            if (-not (Test-Path $script:FallbackExportDir)) {
+                $null = New-Item -ItemType Directory -Path $script:FallbackExportDir -Force
+            }
+            $path         = Join-Path $script:FallbackExportDir $fileName
+            $usedFallback = $true
+        }
+
         $Results | Select-Object TimeCreated, LevelDisplayName, ProviderName, Id, Message |
-            Export-Csv -Path $sfd.FileName -NoTypeInformation -Encoding UTF8
+            Export-Csv -Path $path -NoTypeInformation -Encoding UTF8
+
+        $message = "Exported $($Results.Count) record(s) to:`n$path"
+        if ($usedFallback) {
+            if (Set-ClipboardTextSafe $path) {
+                $message += "`n`nThe path has been copied to the clipboard."
+            }
+            $message += "`n`nRetrieve the file with ScreenConnect file transfer."
+        }
+
         [System.Windows.Forms.MessageBox]::Show(
-            "Exported $($Results.Count) record(s) to:`n$($sfd.FileName)",
+            $message,
             'Export Complete',
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Information)
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Export failed:`n$($_.Exception.Message)",
+            'Export Failed',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error)
     }
 }
 #endregion
@@ -301,10 +446,24 @@ function Invoke-EventQuery {
 #region 5 - UI Construction
 
 # --- Main Form ---
+# Sized against the desktop it actually lands on, rather than a fixed 1150x780 with a 900x600
+# minimum. A ScreenConnect Backstage desktop is commonly 1024x768 and can be smaller; the old
+# fixed size opened with the status bar and part of the detail pane off-screen, and the 900x600
+# minimum then prevented shrinking it back into view.
+$workArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$minW     = 720
+$minH     = 480
+$fitW     = [Math]::Max($minW, $workArea.Width  - 40)
+$fitH     = [Math]::Max($minH, $workArea.Height - 40)
+
+# Preset strip height, capped so that 36 wrapped buttons cannot dictate the window's minimum
+# height - the specific thing that made this unusable on a small desktop. It scrolls past that.
+$presetStripHeight = if ($workArea.Height -lt 800) { 84 } else { 112 }
+
 $mainForm                  = New-Object System.Windows.Forms.Form
-$mainForm.Text             = 'Windows Event Log Viewer'
-$mainForm.Size             = New-Object System.Drawing.Size(1150, 780)
-$mainForm.MinimumSize      = New-Object System.Drawing.Size(900, 600)
+$mainForm.Text             = 'Winnow'
+$mainForm.MinimumSize      = New-Object System.Drawing.Size($minW, $minH)
+$mainForm.Size             = New-Object System.Drawing.Size([int][Math]::Min(1150, $fitW), [int][Math]::Min(780, $fitH))
 $mainForm.StartPosition    = 'CenterScreen'
 $mainForm.Font             = New-Object System.Drawing.Font('Segoe UI', 9)
 
@@ -314,7 +473,9 @@ $rootTable.Dock                 = 'Fill'
 $rootTable.RowCount             = 4
 $rootTable.ColumnCount          = 1
 $null = $rootTable.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$null = $rootTable.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+# Presets row is a fixed height rather than AutoSize, so the strip scrolls instead of growing
+# without limit and pushing the results grid off a short desktop.
+$null = $rootTable.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, $presetStripHeight)))
 $null = $rootTable.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
 $null = $rootTable.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
 $mainForm.Controls.Add($rootTable)
@@ -497,9 +658,12 @@ $pnlFilter.Controls.Add($filterRow1)
 $rootTable.Controls.Add($pnlFilter, 0, 0)
 
 # --- Presets Panel ---
+# Fixed height with its own scrollbar. Under AutoSize, 36 wrapped preset buttons set the window's
+# minimum height and consumed most of a small Backstage desktop.
 $pnlPresets             = New-Object System.Windows.Forms.FlowLayoutPanel
 $pnlPresets.Dock        = 'Fill'
-$pnlPresets.AutoSize    = $true
+$pnlPresets.AutoSize    = $false
+$pnlPresets.AutoScroll  = $true
 $pnlPresets.WrapContents= $true
 $pnlPresets.Padding     = New-Object System.Windows.Forms.Padding(6,4,6,4)
 $pnlPresets.BackColor   = [System.Drawing.Color]::FromArgb(238,238,245)
@@ -681,7 +845,38 @@ $lblUpdate.Text       = ''
 $lblUpdate.Visible    = $false
 $lblUpdate.IsLink     = $true
 $lblUpdate.ForeColor  = [System.Drawing.Color]::FromArgb(0,102,204)
-$lblUpdate.Add_Click({ if ($script:LatestReleaseUrl) { Start-Process $script:LatestReleaseUrl } })
+$lblUpdate.Add_Click({
+    if (-not $script:LatestReleaseUrl) { return }
+
+    if ($script:IsBackstage) {
+        # Launching a browser as SYSTEM on an alternate desktop either silently does nothing or
+        # starts one nobody can see, so hand over the link instead of pretending to open it.
+        $message = "Release page:`n`n$($script:LatestReleaseUrl)"
+        if (Set-ClipboardTextSafe $script:LatestReleaseUrl) {
+            $message += "`n`nThe link has been copied to the clipboard on this machine."
+        }
+        [System.Windows.Forms.MessageBox]::Show(
+            $message, 'Update available',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information)
+    } else {
+        try {
+            Start-Process $script:LatestReleaseUrl
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Could not open the link:`n$($script:LatestReleaseUrl)", 'Update available',
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning)
+        }
+    }
+})
+
+# Which host mode the app decided it is in. Shown deliberately: when a fallback takes effect over
+# a remote session, this is what makes the behaviour explicable rather than mysterious.
+$lblEnvironment           = New-Object System.Windows.Forms.ToolStripStatusLabel
+$lblEnvironment.Text      = Get-HostDescription
+$lblEnvironment.ForeColor = [System.Drawing.Color]::Gray
+$lblEnvironment.Alignment = 'Right'
 
 $spacer             = New-Object System.Windows.Forms.ToolStripStatusLabel
 $spacer.Spring      = $true
@@ -697,6 +892,7 @@ $null = $status.Items.Add($lblUpdate)
 $null = $status.Items.Add($spacer)
 $null = $status.Items.Add($lblCount)
 $null = $status.Items.Add($progressBar)
+$null = $status.Items.Add($lblEnvironment)
 $rootTable.Controls.Add($status, 0, 3)
 #endregion
 
@@ -991,7 +1187,8 @@ $updateTimer.Add_Tick({
     $updateTimer.Stop()
     $newVersion = Test-ForUpdate
     if ($newVersion) {
-        $lblUpdate.Text    = "Update available: $newVersion (click to download)"
+        $action = if ($script:IsBackstage) { 'click to copy link' } else { 'click to download' }
+        $lblUpdate.Text    = "Update available: $newVersion ($action)"
         $lblUpdate.Visible = $true
     }
 })
