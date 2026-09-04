@@ -76,7 +76,7 @@ things. The script detects that and adapts:
 | **Update link** | Copies the release URL rather than launching a browser as SYSTEM. |
 | **Window size** | Sized from the actual desktop, so it fits a 1024×768 Backstage screen instead of opening partly off it. |
 | **Preset strip** | Scrolls within a fixed height, so 36 buttons cannot push the results grid off a short screen. |
-| **Presets…** | Skips opening Notepad, which would appear on a desktop nobody is watching. Shows the `presets.json` path and copies it to the clipboard instead. |
+| **Presets…** | Works unchanged. The editor is an ordinary window in the same process, so it needs no shell dialog and no external editor - both of which are unreliable here. |
 
 The status bar shows which mode it detected, e.g. `SYSTEM - Winsta0\Backstage desktop`, so you can
 tell at a glance which behaviour is in effect.
@@ -138,11 +138,32 @@ place. A **`presets.json` file placed next to the executable** is what makes the
 a rebuild — an external file is readable whatever is compiled in, so this works the same for the
 exe and the script.
 
-Click **Presets…** in the toolbar. It creates the file if it does not exist, opens it, and reloads
-when you are done — no restart. The file is found next to `Winnow.exe` (or `Winnow.ps1`) wherever
-you put it, regardless of the working directory you launched from.
+Click **Presets…** in the toolbar. The file is found next to `Winnow.exe` (or `Winnow.ps1`)
+wherever you put it, regardless of the working directory you launched from.
+
+### The preset editor
+
+The **Presets…** window lists every preset with its status — `Built-in`, `Modified`, `Custom`, or
+`Hidden` — and edits them in place. Changes apply as soon as you save; there is no restart.
+
+| Button | What it does |
+|---|---|
+| **New** | Adds a custom preset. |
+| **Clone** | Copies the selected preset, including a built-in, as a starting point. |
+| **Delete** | Removes a custom preset. Built-ins are hidden rather than deleted, using **Hide this preset**, so they can always be brought back. |
+| **Test** | Runs the preset against this machine and reports how many events it matched, with the timestamp of the most recent. The quickest way to catch a wrong Event ID. |
+| **Save** | Writes `presets.json` and reloads the preset strip. |
+| **Cancel** | Discards everything. The editor works on a copy, so nothing is written until you save. |
+
+Only differences from the built-ins are saved. A preset you never touched is absent from the file
+entirely, which means it keeps tracking future Winnow releases rather than being pinned to
+whatever its definition happened to be the day you opened the editor.
 
 ### presets.json
+
+The editor is a front end to this file, not a replacement format — hand-editing works exactly as
+before, and the editor will read whatever you write. Saving from the editor rewrites the file:
+your changes survive, your formatting and any comments do not.
 
 Three things are possible. A `label` that matches a built-in **changes** it, listing only the
 fields you want different. An unrecognised `label` **adds** a preset. `"disabled": true`
@@ -343,9 +364,10 @@ uses the system proxy, since a SYSTEM process has no per-user proxy configuratio
 | `Winnow.ps1` | The application, and the source of truth. Everything else is generated from it. |
 | `build/Build-Exe.ps1` | Compiles `Winnow.ps1` into `dist\Winnow.exe` with ps2exe. Refuses to build a script that does not parse, so a typo cannot become a broken exe. |
 | `tests/Test-PresetOverrides.ps1` | Tests the `presets.json` merge - partial overlay, disable, add, and safe fallback on a malformed file. Run by CI. |
+| `tests/Test-PresetEditor.ps1` | Tests the editor's save path: the delta it writes has to re-import to exactly what it was exported from, or an edit silently reverts on the next launch. Run by CI. |
 | `build/Generate-PresetDocs.ps1` | Regenerates the preset reference above, reading the preset array out of `Winnow.ps1` via the PowerShell parser so the two cannot disagree. |
 | `build/Generate-Icon.ps1` | Regenerates `winnow.ico` and `docs/images/icon.png`. |
-| `src/`, `tests/` | A C# / WPF rewrite, retained but **not shipped**. It has a preset editor, a `presets.json` side-car, cancellable searches and a test suite. Kept in case signing ever becomes available and it is worth picking back up. |
+| `src/`, `tests/` | A C# / WPF rewrite, retained but **not shipped**. Its remaining advantage over the script is cancellable searches; the preset editor and `presets.json` side-car it was built for both exist here now. Kept in case signing ever becomes available and it is worth picking back up. |
 
 Building the exe locally:
 
