@@ -9,8 +9,35 @@ Add-Type -AssemblyName System.Drawing
 # Bump alongside the version in each release tag (see README > Releasing a new version).
 $script:AppVersion        = '2.1.1'
 $script:UpdateCheckApiUrl = 'https://api.github.com/repos/theknoxtech/winnow/releases/latest'
+
+# Where the script fetches itself from when it has to restart but has no file to point at -
+# see the apartment check below. Always the latest release, never a branch.
+$script:BootstrapUrl = 'https://github.com/theknoxtech/winnow/releases/latest/download/Winnow.ps1'
 $script:LatestReleaseUrl  = $null
 $script:currentResults    = $null
+
+# WinForms needs a single-threaded apartment. Every current host already provides one -
+# powershell.exe always, pwsh since 7.3 - so this only fires on an older pwsh or an explicit
+# -mta. Restarting beats carrying on: under MTA the failures are the clipboard and the common
+# dialogs, which surface later as unrelated-looking UI bugs rather than as an apartment problem.
+if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
+    # Run from memory (irm | iex) there is no file to relaunch, so the new process fetches the
+    # script again. $PSCommandPath is empty in exactly that case, which is what distinguishes it.
+    $relaunchArgs = if ($PSCommandPath) {
+        "-File `"$PSCommandPath`""
+    } else {
+        "-Command `"irm $script:BootstrapUrl | iex`""
+    }
+
+    try {
+        Start-Process powershell.exe -ArgumentList "-STA -NoProfile -ExecutionPolicy Bypass $relaunchArgs" -ErrorAction Stop
+        return
+    } catch {
+        # Better a degraded window than none: the app largely works under MTA, it is export and
+        # copy-to-clipboard that do not.
+        Write-Warning "Could not restart in a single-threaded apartment ($($_.Exception.Message)). Continuing; CSV export and clipboard copying may not work."
+    }
+}
 
 # --- Host environment --------------------------------------------------------
 # ScreenConnect Backstage runs its processes on a separate desktop object, normally as SYSTEM.
@@ -194,7 +221,29 @@ function Get-AppDirectory {
     } catch { }
 
     if ($PSScriptRoot) { return $PSScriptRoot }
-    return (Get-Location).Path
+    return (Get-UserDataDirectory)
+}
+
+function Get-UserDataDirectory {
+    # Only reached when Winnow is running from memory (irm | iex). There is no file to sit beside
+    # then, and the working directory is wherever the console happened to be - C:\Windows\System32
+    # for an elevated prompt, which is both unpredictable and somewhere presets have no business
+    # being written. %LOCALAPPDATA% resolves per account, SYSTEM included, so a Backstage session
+    # gets a stable path from this too.
+    $root = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } elseif ($env:APPDATA) { $env:APPDATA } else { $null }
+    if (-not $root) { return (Get-Location).Path }
+
+    $directory = Join-Path $root 'Winnow'
+    try {
+        if (-not (Test-Path $directory)) {
+            $null = New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop
+        }
+        return $directory
+    } catch {
+        # A profile that cannot be written to is not worth failing startup over; presets simply
+        # stay at their built-in definitions.
+        return (Get-Location).Path
+    }
 }
 
 $script:PresetFilePath = Join-Path (Get-AppDirectory) 'presets.json'

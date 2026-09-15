@@ -44,6 +44,13 @@ Every release publishes a SHA-256 for each file, in both the release notes and `
 Since neither is signed, those hashes are what confirm the file you downloaded is the file that
 was published. See [README § Verifying a download](README.md#verifying-a-download).
 
+The `irm | iex` one-liner fetches `Winnow.ps1` from the latest release over HTTPS, so it runs that
+same published script and nothing else. Two things are worth being clear about, though. Piping
+straight into `iex` executes the script as it arrives, with no opportunity to check a hash first.
+And that command shape is the one used by the *ClickFix* class of social-engineering attack, so
+endpoint security products watch for it — which is a reason to prefer fetching the script to a
+file on a machine that is not yours. See [README § Which one to use](README.md#which-one-to-use).
+
 ## Code signing
 
 Winnow is unsigned. Signing certificates are a recurring cost with a hardware-key requirement
