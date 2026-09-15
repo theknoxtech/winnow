@@ -131,6 +131,7 @@ $script:LogSources = @(
     'DFS Replication'
     'DNS Server'
     'Microsoft-Windows-Kernel-PnP/Configuration'
+    'Microsoft-Windows-TaskScheduler/Operational'
 )
 
 $script:LevelMap = [ordered]@{
@@ -148,6 +149,11 @@ $script:Presets = @(
     [ordered]@{ Group='System Changes'; Label='Service Changes';    LogName='System';      Id=@(7045,7036);                 Description='New service installed or state changed' }
     [ordered]@{ Group='System Changes'; Label='Driver Installs';    LogName='System';      Id=@(7045); MessageFilter='driver'; Description='Kernel/file system driver installed (ID 7045 is shared by every new service; filtered here to entries whose Service Type mentions "driver")' }
     [ordered]@{ Group='System Changes'; Label='Startup/Shutdown';   LogName='System';      Id=@(6005,6006,1074,6008);       Description='Boot, clean shutdown, unexpected shutdown, restart reason' }
+    # Task Scheduler's own history log rather than the Security log. It needs no audit policy, but it
+    # is disabled by default on client Windows ("Enable All Tasks History"), in which case a search
+    # reports that the log is off instead of an empty result - see Get-DisabledLogNotice.
+    [ordered]@{ Group='Scheduled Tasks'; Label='Task Changes';      LogName='Microsoft-Windows-TaskScheduler/Operational'; Id=@(106,140,141,142); Description='Scheduled task registered, updated, deleted, or disabled - and by which user. Task Scheduler history log, off by default on client Windows' }
+    [ordered]@{ Group='Scheduled Tasks'; Label='Task Failures';     LogName='Microsoft-Windows-TaskScheduler/Operational'; Id=@(101,103,202,203,322,329); Description='Task failed to start, action failed or would not launch, skipped because already running, or killed for exceeding its time limit - with the error value. Task Scheduler history log, off by default on client Windows' }
     [ordered]@{ Group='Account/Policy'; Label='User Acct Changes';  LogName='Security';    Id=@(4720,4722,4725,4726,4738); Description='Account created, enabled, disabled, deleted, modified' }
     [ordered]@{ Group='Account/Policy'; Label='Policy Changes';     LogName='Security';    Id=@(4719,4739);                 Description='System and domain audit policy changed' }
     [ordered]@{ Group='Account/Policy'; Label='Logon Events';       LogName='Security';    Id=@(4624,4625,4634,4647);       Description='Successful/failed logon and logoff' }
@@ -156,7 +162,7 @@ $script:Presets = @(
     [ordered]@{ Group='Account/Policy'; Label='Kerberos Auth';      LogName='Security';    Id=@(4768,4769,4771,4776);       Description='TGT/service-ticket requests, pre-auth failures, credential validation' }
     [ordered]@{ Group='Account/Policy'; Label='Explicit Credential'; LogName='Security';   Id=@(4648);                      Description='Logon using explicit credentials (RunAs) - possible lateral movement' }
     [ordered]@{ Group='Account/Policy'; Label='Special Privileges'; LogName='Security';    Id=@(4672);                      Description='Admin-equivalent logon - sensitive privileges assigned' }
-    [ordered]@{ Group='Account/Policy'; Label='Scheduled Task Chg'; LogName='Security';    Id=@(4698,4699,4700,4701,4702);  Description='Scheduled task created, deleted, enabled, disabled, or updated' }
+    [ordered]@{ Group='Account/Policy'; Label='Scheduled Task Chg'; LogName='Security';    Id=@(4698,4699,4700,4701,4702);  Description='Scheduled task created, deleted, enabled, disabled, or updated - only logged when the "Audit Other Object Access Events" policy is on, which it is not by default; Task Changes covers the same ground without it' }
     [ordered]@{ Group='Account/Policy'; Label='Audit Log Cleared';  LogName='Security';    Id=@(1102);                      Description='Security audit log was cleared - investigate immediately' }
     [ordered]@{ Group='Account/Policy'; Label='PS Script Block Log'; LogName='Microsoft-Windows-PowerShell/Operational'; Id=@(4104); Description='Logged PowerShell script block text (requires Script Block Logging GPO)' }
     [ordered]@{ Group='Account/Policy'; Label='Defender Detections'; LogName='Microsoft-Windows-Windows Defender/Operational'; Id=@(1116,1117); Description='Malware detected / remediation action taken' }
@@ -186,6 +192,7 @@ $script:SecurityIdentityIds = @(4624,4625,4634,4647,4648,4672,4720,4722,4725,472
 
 $script:GroupColors = @{
     'System Changes' = [System.Drawing.Color]::FromArgb(220,235,252)
+    'Scheduled Tasks' = [System.Drawing.Color]::FromArgb(245,232,248)
     'Account/Policy' = [System.Drawing.Color]::FromArgb(255,235,220)
     'App Health'     = [System.Drawing.Color]::FromArgb(255,220,220)
     'Resources'      = [System.Drawing.Color]::FromArgb(255,248,210)
@@ -898,16 +905,43 @@ function New-QueryArgument {
     }
 }
 
+function Get-DisabledLogNotice {
+    # A disabled log answers a query with "No events were found", word for word what an empty log
+    # says. So a search against a log nobody switched on reports zero records and reads as a clean
+    # bill of health. The Task Scheduler history log is off by default on client Windows, which is
+    # where this bit - but it applies to any log, so every empty result is checked.
+    param([string[]] $LogNames)
+
+    foreach ($name in ($LogNames | Where-Object { $_ })) {
+        try {
+            $log = Get-WinEvent -ListLog $name -ErrorAction Stop
+        } catch {
+            # A log that does not exist on this machine (the DC-only ones) is already reported as an
+            # empty result by design, so there is nothing further to say about it.
+            continue
+        }
+        if (-not $log.IsEnabled) {
+            return "The '$name' log is disabled here, so nothing is recorded - 0 records means nothing. Enable it as Administrator: wevtutil sl `"$name`" /e:true"
+        }
+    }
+    return $null
+}
+
 function Invoke-EventQuery {
     # Reads its argument by index, not by property. Index access on a missing key yields $null
     # under StrictMode; property access throws. New-QueryArgument should make that impossible
     # anyway, but this is the place the failure actually surfaced, so it is guarded here too.
+    #
+    # Over the 30-line guideline because the three error mappings in the catch blocks only make
+    # sense next to the four branches that can raise them.
     param($Argument)
     $kw = $Argument['Keyword']
     try {
         if ($Argument['Preset']) {
-            $events = Get-EventsForPreset -Preset $Argument['Preset'] -MaxEvents $Argument['MaxEvents']
-            return @{ Events = $events; Keyword = $kw }
+            $preset = $Argument['Preset']
+            $events = Get-EventsForPreset -Preset $preset -MaxEvents $Argument['MaxEvents']
+            $notice = if (-not $events) { Get-DisabledLogNotice -LogNames @($preset['LogName'], $preset['LogName2']) } else { $null }
+            return @{ Events = $events; Keyword = $kw; Notice = $notice }
         } elseif ($Argument['AppName']) {
             $events = Get-EventsForApp -AppName $Argument['AppName'] -MaxEvents $Argument['MaxEvents']
             return @{ Events = $events; Keyword = $kw }
@@ -925,7 +959,9 @@ function Invoke-EventQuery {
         return @{ Error = "Access denied.`n`nThe Security log requires Administrator privileges.`nRight-click the script and choose 'Run as Administrator'." }
     } catch {
         if ($_.Exception.Message -like '*No events*' -or $_.Exception.HResult -eq -2147024816) {
-            return @{ Events = @(); Keyword = $kw }
+            $filter = $Argument['FilterHash']
+            $notice = if ($filter) { Get-DisabledLogNotice -LogNames @($filter['LogName']) } else { $null }
+            return @{ Events = @(); Keyword = $kw; Notice = $notice }
         } else {
             return @{ Error = $_.Exception.Message }
         }
@@ -948,7 +984,7 @@ $minH     = 480
 $fitW     = [Math]::Max($minW, $workArea.Width  - 40)
 $fitH     = [Math]::Max($minH, $workArea.Height - 40)
 
-# Preset strip height, capped so that 36 wrapped buttons cannot dictate the window's minimum
+# Preset strip height, capped so that a full set of wrapped buttons cannot dictate the window's minimum
 # height - the specific thing that made this unusable on a small desktop. It scrolls past that.
 $presetStripHeight = if ($workArea.Height -lt 800) { 84 } else { 112 }
 
@@ -1164,7 +1200,7 @@ $pnlFilter.Controls.Add($filterRow1)
 $rootTable.Controls.Add($pnlFilter, 0, 0)
 
 # --- Presets Panel ---
-# Fixed height with its own scrollbar. Under AutoSize, 36 wrapped preset buttons set the window's
+# Fixed height with its own scrollbar. Under AutoSize, a full set of wrapped preset buttons set the window's
 # minimum height and consumed most of a small Backstage desktop.
 $pnlPresets             = New-Object System.Windows.Forms.FlowLayoutPanel
 $pnlPresets.Dock        = 'Fill'
@@ -2136,7 +2172,9 @@ function Show-SearchResults {
 
     $count = $dt.Rows.Count
     if ($count -eq 0) {
-        $lblStatus.Text = '0 records found — try widening filters'
+        # A disabled log is the one case where "widen your filters" is the wrong advice.
+        $notice = if ($Result.ContainsKey('Notice')) { $Result['Notice'] } else { $null }
+        $lblStatus.Text = if ($notice) { $notice } else { '0 records found — try widening filters' }
         $lblCount.Text  = ''
         $btnExport.Enabled = $false
     } else {

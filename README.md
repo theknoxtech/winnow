@@ -8,7 +8,7 @@ A single-file PowerShell + WinForms app for triaging Windows Event Logs, with qu
 for common IT and security investigations, application-name search, and security-identity search
 by user, host, or IP.
 
-Event Viewer will show you everything. Winnow's job is the opposite: 36 curated presets that go
+Event Viewer will show you everything. Winnow's job is the opposite: 38 curated presets that go
 straight to the events that explain what actually went wrong on the machine in front of you.
 
 Built for remote support: one file, no installer, no prerequisites beyond Windows PowerShell 5.1,
@@ -143,7 +143,7 @@ things. The script detects that and adapts:
 | **CSV export** | Skips the file dialog, which is unreliable on an alternate desktop, and writes to `%TEMP%\Winnow\` instead, copying the path to the clipboard. Retrieve it with ScreenConnect file transfer. |
 | **Update link** | Copies the release URL rather than launching a browser as SYSTEM. |
 | **Window size** | Sized from the actual desktop, so it fits a 1024×768 Backstage screen instead of opening partly off it. |
-| **Preset strip** | Scrolls within a fixed height, so 36 buttons cannot push the results grid off a short screen. |
+| **Preset strip** | Scrolls within a fixed height, so the full set of preset buttons cannot push the results grid off a short screen. |
 | **Presets…** | Works unchanged. The editor is an ordinary window in the same process, so it needs no shell dialog and no external editor - both of which are unreliable here. |
 
 The status bar shows which mode it detected, e.g. `SYSTEM - Winsta0\Backstage desktop`, so you can
@@ -201,7 +201,7 @@ or Backstage.
 
 ## Presets
 
-The 36 built-in presets are baked into the app, so with `Winnow.exe` they cannot be edited in
+The built-in presets are baked into the app, so with `Winnow.exe` they cannot be edited in
 place. A **`presets.json` file placed next to the executable** is what makes them editable without
 a rebuild — an external file is readable whatever is compiled in, so this works the same for the
 exe and the script.
@@ -291,6 +291,22 @@ ID 1 returns a flood of unrelated events.
 Service Control Manager's 7031/7034 are emitted for *every* service on the machine, and only the
 message text says which one, so the Spooler preset filters on the text.
 
+**Why a preset can say a log is disabled:** Windows answers a query against a switched-off log
+with *"No events were found"* — word for word what an empty log says — so a search there would
+report 0 records and read as a clean bill of health. Whenever a search comes back empty, Winnow
+checks whether the log is actually enabled, and if not says so in the status bar, along with the
+command to switch it on. The **Task Changes** and **Task Failures** presets are where you will
+meet this most: they read the Task Scheduler history log, which is off by default on client
+Windows (it is the *Enable All Tasks History* toggle in Task Scheduler). As Administrator:
+
+```powershell
+wevtutil sl "Microsoft-Windows-TaskScheduler/Operational" /e:true
+```
+
+History starts from that moment. Enabling a log records what happens next; it cannot recover what
+was never written, so on a machine you are investigating after the fact it will not help with the
+incident itself.
+
 After editing presets, regenerate the reference table below so the docs cannot drift:
 
 ```powershell
@@ -317,7 +333,7 @@ shown in the "Scoped by" column. Presets without a note filter on log and Event 
 | Kerberos Auth | Security | 4768, 4769, 4771, 4776 | TGT/service-ticket requests, pre-auth failures, credential validation |  |
 | Explicit Credential | Security | 4648 | Logon using explicit credentials (RunAs) - possible lateral movement |  |
 | Special Privileges | Security | 4672 | Admin-equivalent logon - sensitive privileges assigned |  |
-| Scheduled Task Chg | Security | 4698, 4699, 4700, 4701, 4702 | Scheduled task created, deleted, enabled, disabled, or updated |  |
+| Scheduled Task Chg | Security | 4698, 4699, 4700, 4701, 4702 | Scheduled task created, deleted, enabled, disabled, or updated - only logged when the "Audit Other Object Access Events" policy is on, which it is not by default; Task Changes covers the same ground without it |  |
 | Audit Log Cleared | Security | 1102 | Security audit log was cleared - investigate immediately |  |
 | PS Script Block Log | Microsoft-Windows-PowerShell/Operational | 4104 | Logged PowerShell script block text (requires Script Block Logging GPO) |  |
 | Defender Detections | Microsoft-Windows-Windows Defender/Operational | 1116, 1117 | Malware detected / remediation action taken |  |
@@ -371,6 +387,13 @@ shown in the "Scoped by" column. Presets without a note filter on log and Event 
 |---|---|---|---|---|
 | Resource/Memory | System<br>Application | 2004, 2019, 2020<br>1530 | Low memory / pool exhaustion / profile warnings |  |
 | Disk Errors | System | 7, 11, 153 | Bad block, device I/O error, disk reset - IDs 7/11/153 are also reused by unrelated providers (e.g. Hyper-V networking, Kernel-Boot), so this is scoped to the disk drivers specifically | provider `disk`, `Microsoft-Windows-Disk` |
+
+### Scheduled Tasks
+
+| Preset | Log(s) | Event ID(s) | What it shows | Scoped by |
+|---|---|---|---|---|
+| Task Changes | Microsoft-Windows-TaskScheduler/Operational | 106, 140, 141, 142 | Scheduled task registered, updated, deleted, or disabled - and by which user. Task Scheduler history log, off by default on client Windows |  |
+| Task Failures | Microsoft-Windows-TaskScheduler/Operational | 101, 103, 202, 203, 322, 329 | Task failed to start, action failed or would not launch, skipped because already running, or killed for exceeding its time limit - with the error value. Task Scheduler history log, off by default on client Windows |  |
 
 ### System Changes
 

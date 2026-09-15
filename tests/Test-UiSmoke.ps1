@@ -233,6 +233,27 @@ foreach ($shape in $shapes.GetEnumerator()) {
     Test-ErrorsClean "reading the argument for $($shape.Key)"
 }
 
+Write-Host "`nDisabled-log detection"
+# Only the deterministic cases are asserted, since whether any given log is switched on varies by
+# machine. The Application log is always enabled, and a log that does not exist must stay silent
+# because the DC-only presets rely on an absent log reading as an ordinary empty result.
+$Error.Clear()
+Assert-That 'an enabled log produces no notice' ($null -eq (Get-DisabledLogNotice -LogNames @('Application')))
+Assert-That 'a missing log produces no notice' ($null -eq (Get-DisabledLogNotice -LogNames @('No-Such-Log/Anywhere')))
+Assert-That 'empty and null names are ignored' ($null -eq (Get-DisabledLogNotice -LogNames @($null, '')))
+Test-ErrorsClean 'checking logs raises no error'
+
+$taskLog = Get-WinEvent -ListLog 'Microsoft-Windows-TaskScheduler/Operational' -ErrorAction SilentlyContinue
+if ($taskLog -and -not $taskLog.IsEnabled) {
+    # Where the machine happens to have it switched off, which is the default on client Windows,
+    # check the case this exists for end to end: the preset's empty result carries the notice.
+    $taskPreset = $script:Presets | Where-Object { $_['Label'] -eq 'Task Changes' } | Select-Object -First 1
+    $result     = Invoke-EventQuery -Argument (New-QueryArgument -Preset $taskPreset -MaxEvents 100 -Keyword '')
+    Assert-That 'a preset on a disabled log says so' ([bool]$result['Notice']) "$($result['Notice'])"
+} else {
+    Write-Host '  SKIP  a preset on a disabled log says so (the Task Scheduler log is enabled here)' -ForegroundColor DarkGray
+}
+
 $mainForm.Dispose()
 
 Write-Host ''
